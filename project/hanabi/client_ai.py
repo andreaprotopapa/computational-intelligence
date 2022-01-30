@@ -422,7 +422,9 @@ def manageInput():
 
         elif command == "ready" and status == "Lobby":
             s.send(GameData.ClientPlayerStartRequest(playerName).serialize())
-
+            while status == 'Lobby':
+                ### Wait in the lobby until the game starts
+                continue
         #elif command == "show" and status == "Game":
          #   s.send(GameData.ClientGetGameStateRequest(playerName).serialize())
 

@@ -201,7 +201,7 @@ class ServerActionValid(ServerToClientData):
     Action well performed.
     player: the current player.
     lastPlayer: the player that made the last move.
-    action: the actino occurred. Now it is only "discard".
+    action: the action occurred. Now it is only "discard".
     move: the last move that occurred.
     cardHandIndex: the card index of the lastPlayer played card, given his hand order.
     '''

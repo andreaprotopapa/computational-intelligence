@@ -8,6 +8,7 @@ import GameData
 import socket
 from constants import *
 import os
+import time
 
 
 if len(argv) < 4:
@@ -35,12 +36,16 @@ num_games = 0
 average_score = 0.0
 num_games_limit = 1
 
+update = True
+sleeptime = 0.01
+
 class Info(object):
     """Info object for all the actual information of the agent\n
         'my_name': client agent's name
         'my_cards': [list of hintState tuples on agent's cards]
         'my_cards_clued': # of cards clued in agent's hand
         'my_turn': bool
+        'my_turn_idx': int
         'my_available_actions': [list of possible actions for the agent]
 
         'player_names': [list of all the other players' names]\n
@@ -66,6 +71,7 @@ class Info(object):
             self.my_cards_clued = 0
             self.handSize = len(self.my_cards)
             self.my_turn = False
+            self.my_turn_idx = None
             self.my_available_actions = []
 
             self.player_names = [player.name for player in data.players if player.name != playerName] # all the other players' names
@@ -89,21 +95,23 @@ class Info(object):
                 self.players[p] = {'turn': -1, 'cards': []}
             for i in range(len(data.players)):
                 if data.players[i].name == playerName:
-                    self.my_turn = i
+                    self.my_turn_idx = i
                 else:
                     self.players[data.players[i].name]['turn'] = i
                     self.players[data.players[i].name]['cards'] = data.players[i].hand
                     self.player_idx[data.players[i].name] = i # ???
                     self.idx_player[i] = data.players[i].name # ???
         
-            self.currentPlayer = data.currentPlayer
+            self.current_player = data.currentPlayer
             self.last_round = False
         else:
             self.init = False
+            self.my_turn = False
 
     def updateInfo(self, data):
         for i in range(len(data.players)): #set cards for each player's hand I can see
-            self.players[data.players[i].name]['cards'] = data.players[i].hand
+            if i != self.my_turn_idx:
+                self.players[data.players[i].name]['cards'] = data.players[i].hand
 
         for color in data.tableCards: #set table cards
             if len(data.tableCards[color]) > 0:
@@ -140,16 +148,21 @@ class Info(object):
             # discard actions
             if self.last_round:
                 self.available_actions.extend([('discard',0), ('discard', 1), ('discard', 2), ('discard', 3), ('discard', 4)])
-        self.currentPlayer = data.currentPlayer
+        self.current_player = data.currentPlayer
+
 
     def toString(self):
-        players_hands = ''.join("Player " + p + " " + map(str, self.players[p]['cards'])+'\n' for p in self.player_names)
-        table_cards = ''.join("\t" + color + ": [" + self.table_cards[color] +"]" for color in self.table_cards)
-        discard_pile = ''.join("\t" + color + ": [ " + self.discard_pile[color] +" ]" for color in self.discard_pile)
-        return (  "Your name: " + self.my_name + "\n"
-                + "Current player: " + self.currentPlayer + "\n"
+        players_hands = ""
+        for p in self.players:
+            players_hands += f"\tPlayer {p}:\n"
+            for card in self.players[p]['cards']:
+                players_hands += f"\t\t({card.color}, {card.value})\n"
+        table_cards = ''.join(f"\t{color}: [ {self.table_cards[color]} ]" for color in self.table_cards)
+        discard_pile = ''.join([f"\t{color}: [ {self.discard_pile[color]} ]\n" for color in self.discard_pile])
+        return (  "\nYour name: " + self.my_name + "\n"
+                + "Current player: " + self.current_player + "\n"
                 + "Player hands: \n" + players_hands + "\n"
-                + "Cards in your hand: " + self.handSize + "\n"
+                + f"Cards in your hand: {self.handSize}\n"
                 + "Hints for you: " + str(self.my_cards) + "\n"
                 + "Table cards: \n" + table_cards + "\n"
                 + "Discard pile: \n" + discard_pile + "\n"
@@ -159,16 +172,23 @@ class Info(object):
 my_info = Info() # all agent knowledge is here
 
 
-def parse_game_data(my_info: Info, data):
-        if my_info.init is False: #init Info
-            my_info = Info(data)
-        else:
-            my_info.updateInfo(data)
-        print(my_info.toString())
+def parse_game_data(data):
+    global my_info
+    if my_info.init is False: #init Info
+        my_info = Info(data)
+    else:
+        my_info.updateInfo(data)
+    time.sleep(sleeptime)
+    if data.currentPlayer == playerName and update:
+            my_info.my_turn = True
+            print(my_info.toString())
 
-def discard_feedback(my_info: Info, data):
+
+
+def discard_feedback(data):
+    global my_info 
     my_info.num_deck_cards -= 1
-    my_info.info['rem_clues'] += 1
+    my_info.rem_clues += 1
     if data.handLength < 5:
         my_info.last_round = True
     if data.lastPlayer == my_info.my_name:
@@ -178,7 +198,8 @@ def discard_feedback(my_info: Info, data):
             my_info.my_cards_clued -= 1
         my_info.my_cards[data.cardHandIndex] = (None, None)
 
-def niceMove_feedback(my_info: Info, data):
+def niceMove_feedback(data):
+    global my_info
     my_info.num_deck_cards -= 1
     #TODO (Apparantly not supported by the server!)
     # if data.card.value == 5 and my_info.rem_clues < 8:
@@ -192,7 +213,8 @@ def niceMove_feedback(my_info: Info, data):
             my_info.my_cards_clued -= 1
         my_info.my_cards[data.cardHandIndex] = (None, None)
 
-def badMove_feedback(my_info: Info, data):
+def badMove_feedback(data):
+    global my_info
     my_info.num_deck_cards -= 1
     my_info.rem_mistakes -= 1
     if data.handLength < 5:
@@ -204,7 +226,8 @@ def badMove_feedback(my_info: Info, data):
             my_info.my_cards_clued -= 1
         my_info.my_cards[data.cardHandIndex] = (None, None)
 
-def parse_hint_data(my_info: Info, data):
+def parse_hint_data(data):
+    global my_info
     hint = {'giver'     :   data.source,
             'receiver'  :   data.destination, 
             'type'      :   data.type,
@@ -213,7 +236,7 @@ def parse_hint_data(my_info: Info, data):
     my_info.rem_clues -= 1
     if hint['receiver'] == my_info.my_name:
         for i in hint['positions']:
-            ### THEORY OF MIND: To avoid misplays, we only memorize the first position !!!
+            ### THEORY OF MIND: To avoid misplays, we only memorize the first position !!! I DONT LIKE, FOR FIRST COULD BE DANGEROUS!!!
             if hint['type'] == 'value':
                 if my_info.my_cards[i][0] == None and my_info.my_cards[i][1] == None:
                     my_info.my_cards_clued += 1
@@ -237,7 +260,8 @@ def parse_hint_data(my_info: Info, data):
                 self.q_table[self.state][1])
     self.state = next_state """
 
-def process_game_over(my_info: Info, score):
+def process_game_over(score):
+    global my_info
     global run
     global num_games
     global average_score
@@ -297,14 +321,14 @@ def select_action():
                     return ('discard', i)
             ## Prioritize value hints over color hints 
             if value_hint != None:
-                ## Check if there exists a deck that actually fits this hint and then play; otherwise try to discard it.
+                ## Check if there exists a deck that actually fits this hint and then play; otherwise try to discard it. IT DEPENDS!!!
                 for color in card_colors:
                     if my_info.table_cards[color]+1 == value_hint:
                         return ('play', i)
-                if my_info.rem_clues < 8:
+                if my_info.rem_clues < 8: #TOO RISKY!! if a hint 5 I have not to discard!!!
                     return ('discard', i)
             if color_hint != None:
-                ## Check if there exists a deck that actually fits this hint and then play; otherwise try to discard it.
+                ## Check if there exists a deck that actually fits this hint and then play; otherwise try to discard it. IT DEPENDS!!!
                 for color in card_colors:
                     if my_info.table_cards[color] != 5:
                         return ('play', i)
@@ -314,7 +338,7 @@ def select_action():
         ## Iterate over your teammates' hands and hint any immediate play (hint first to the opponents that play sooner.)
         ## Care ADDED about other cards that may be touched!
         if my_info.rem_clues > 0:
-            next_player_idx = (my_info.my_turn + 1) % my_info.num_players
+            next_player_idx = (my_info.my_turn_idx + 1) % my_info.num_players
             for i in range(my_info.num_players-1):
                 player_name = my_info.idx_player[next_player_idx]
                 player_cards = my_info.players[player_name]['cards']
@@ -406,15 +430,23 @@ def manageInput():
     command = input() ## Give the ready command
     global run
     global status
+    global update
     while run:
-        if status != "Lobby": 
-            s.send(GameData.ClientGetGameStateRequest(playerName).serialize()) #like "show" command in client.py, it gives the actual knowledge for the actual player
+        if status != "Lobby":
+            if my_info.init is not True: 
+                s.send(GameData.ClientGetGameStateRequest(playerName).serialize())
+            while my_info.my_turn == False:
+                time.sleep(sleeptime)
+                if update:
+                    s.send(GameData.ClientGetGameStateRequest(playerName).serialize())
+                pass
+            update = False
             my_info.my_turn = False
+            s.send(GameData.ClientGetGameStateRequest(playerName).serialize()) #like "show" command in client.py, it gives the actual knowledge for the actual player
             action = select_action()
             command = action_to_command(action)
             if True: # if verbose_action:
                 print(command)
-
         # Choose data to send
         if command == "exit":
             run = False
@@ -423,8 +455,8 @@ def manageInput():
         elif command == "ready" and status == "Lobby":
             s.send(GameData.ClientPlayerStartRequest(playerName).serialize())
             while status == 'Lobby':
-                ### Wait in the lobby until the game starts
-                continue
+                    ### Wait in the lobby until the game starts
+                    continue
         #elif command == "show" and status == "Game":
          #   s.send(GameData.ClientGetGameStateRequest(playerName).serialize())
 
@@ -507,7 +539,9 @@ with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
 
         if type(data) is GameData.ServerGameStateData: ### done
             dataOk = True
-            parse_game_data(my_info, data)
+            if (data.currentPlayer == playerName and update) or not my_info.init:
+                parse_game_data(data)
+
 
         if type(data) is GameData.ServerActionInvalid:
             dataOk = True
@@ -516,24 +550,27 @@ with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
 
         if type(data) is GameData.ServerActionValid: #discard feedback
             dataOk = True
-            print("Discard action valid!")
+            print(f"Discard action valid! Discarded ({data.card.color}, {data.card.value})")
             print("Current player: " + data.player)
-            discard_feedback(my_info, data)
+            discard_feedback(data)
+            update = True
 
         if type(data) is GameData.ServerPlayerMoveOk: #good play feedback
             dataOk = True
-            print("Nice move!")
+            print(f"Nice move! Played ({data.card.color}, {data.card.value})")
             print("Current player: " + data.player)
-            niceMove_feedback(my_info,data)
+            niceMove_feedback(data)
+            update = True
 
         if type(data) is GameData.ServerPlayerThunderStrike: #bad play feedback
             dataOk = True
-            print("OH NO! The Gods are unhappy with you!")
-            badMove_feedback(my_info, data)
+            print(f"OH NO! The Gods are unhappy with you! Tried to play ({data.card.color}, {data.card.value})")
+            badMove_feedback(data)
+            update = True
 
         if type(data) is GameData.ServerHintData: #hint given to this agent
             dataOk = True
-            parse_hint_data(my_info, data)
+            parse_hint_data(data)
             print("Hint type: " + data.type)
             print("Player " + data.destination + " cards with value " + str(data.value) + " are:")
             for i in data.positions:
@@ -551,10 +588,11 @@ with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
             stdout.flush()
             #run = False
             print("Ready for a new game!")
-            process_game_over(my_info, data.score)
+            process_game_over(data.score)
 
         if not dataOk:
             print("Unknown or unimplemented data type: " +  str(type(data)))
 
-        print("[" + playerName + " - " + status + "]: ", end="")
+        if hasattr(data, 'currentPlayer') and data.currentPlayer == playerName and update:
+            print("[" + playerName + " - " + status + "]: ", end="")
         stdout.flush()

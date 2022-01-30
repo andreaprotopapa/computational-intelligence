@@ -134,11 +134,11 @@ with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
             print(data.message)
         if type(data) is GameData.ServerActionValid:
             dataOk = True
-            print("Action valid!")
+            print(f"Discard action valid! Discarded ({data.card.color}, {data.card.value})")
             print("Current player: " + data.player)
         if type(data) is GameData.ServerPlayerMoveOk:
             dataOk = True
-            print("Nice move!")
+            print(f"Nice move! Played ({data.card.color}, {data.card.value})")
             print("Current player: " + data.player)
         if type(data) is GameData.ServerPlayerThunderStrike:
             dataOk = True

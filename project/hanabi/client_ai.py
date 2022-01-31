@@ -11,16 +11,19 @@ import os
 import time
 
 
-if len(argv) < 4:
+if len(argv) < 5:
     print("You need the player name to start the game.")
+    print("You need to specify if you want out results in a file (True/False).")
     #exit(-1)
     playerName = "Test" # For debug
     ip = HOST
     port = PORT
+    results = True
 else:
     playerName = argv[3]
     ip = argv[1]
     port = int(argv[2])
+    results = argv[4]
 
 run = True
 
@@ -34,10 +37,12 @@ hintState = ("", "")
 
 num_games = 0
 average_score = 0.0
-num_games_limit = 1
+num_games_limit = 100
 
 update = True
 sleeptime = 0.01
+before_action = True
+
 
 class Info(object):
     """Info object for all the actual information of the agent\n
@@ -107,6 +112,7 @@ class Info(object):
         else:
             self.init = False
             self.my_turn = False
+            self.my_name = playerName
 
     def updateInfo(self, data):
         for i in range(len(data.players)): #set cards for each player's hand I can see
@@ -147,7 +153,7 @@ class Info(object):
         if self.rem_clues != 8: # discard is good (so, valid) only if I can get back a blue token
             # discard actions
             if self.last_round:
-                self.available_actions.extend([('discard',0), ('discard', 1), ('discard', 2), ('discard', 3), ('discard', 4)])
+                self.my_available_actions.extend([('discard',0), ('discard', 1), ('discard', 2), ('discard', 3), ('discard', 4)])
         self.current_player = data.currentPlayer
 
 
@@ -166,8 +172,9 @@ class Info(object):
                 + "Hints for you: " + str(self.my_cards) + "\n"
                 + "Table cards: \n" + table_cards + "\n"
                 + "Discard pile: \n" + discard_pile + "\n"
-                + "Note tokens used: " + str(self.rem_clues) + "/8" + "\n"
-                + "Storm tokens used: " + str(self.rem_mistakes) + "/3" + "\n")
+                + f"Cards remaining: {self.num_deck_cards}\n"
+                + "Note tokens used: " + str(8-self.rem_clues) + "/8" + "\n"
+                + "Storm tokens used: " + str(3-self.rem_mistakes) + "/3" + "\n")
 
 my_info = Info() # all agent knowledge is here
 
@@ -183,8 +190,6 @@ def parse_game_data(data):
             my_info.my_turn = True
             print(my_info.toString())
 
-
-
 def discard_feedback(data):
     global my_info 
     my_info.num_deck_cards -= 1
@@ -192,8 +197,6 @@ def discard_feedback(data):
     if data.handLength < 5:
         my_info.last_round = True
     if data.lastPlayer == my_info.my_name:
-        if True: # self.verbose_action:
-            print("Card discarded!")
         if my_info.my_cards[data.cardHandIndex][0] != None or my_info.my_cards[data.cardHandIndex][1] != None:
             my_info.my_cards_clued -= 1
         my_info.my_cards[data.cardHandIndex] = (None, None)
@@ -207,8 +210,6 @@ def niceMove_feedback(data):
     if data.handLength < 5:
         my_info.last_round = True
     if data.lastPlayer == my_info.my_name:
-        if True: # self.verbose_action:
-            print("Card played successfully!")
         if my_info.my_cards[data.cardHandIndex][0] != None or my_info.my_cards[data.cardHandIndex][1] != None:
             my_info.my_cards_clued -= 1
         my_info.my_cards[data.cardHandIndex] = (None, None)
@@ -219,9 +220,7 @@ def badMove_feedback(data):
     my_info.rem_mistakes -= 1
     if data.handLength < 5:
         my_info.last_round = True
-    if data.lastPlayer == my_info.my_name:
-        if True: #self.verbose_action:
-            print("Card misplayed!")
+    if data.lastPlayer == my_info.my_name: #my fault
         if my_info.my_cards[data.cardHandIndex][0] != None or my_info.my_cards[data.cardHandIndex][1] != None:
             my_info.my_cards_clued -= 1
         my_info.my_cards[data.cardHandIndex] = (None, None)
@@ -266,19 +265,41 @@ def process_game_over(score):
     global num_games
     global average_score
     global num_games_limit
+    global update
+    global before_action
+    global results
     print(f"\nThis game is over with final score {score}. "
     f"{max(my_info.num_deck_cards, 0)} cards remained in the deck. The final table cards: {my_info.table_cards}. ")
-    my_info = Info() #reset info
+    
+    if results:
+        if num_games == 0: 
+            mode = "w"
+        else:
+            mode = "a"
+        with open("results.txt", mode) as file_out:
+            # Writing data to a file
+            file_out.write(f"Game n.{num_games}: {score} \n")
 
     num_games += 1
     average_score = (average_score * (num_games-1)+score)/num_games
     print(f"Games played so far: {num_games}. Average score in the tournament so far: {average_score}")
-    print("Beginning a new game...")
+    
     ## For DEBUGGING
     #tmp = input()
     if num_games_limit != None:
         if num_games >= num_games_limit:
             run = False
+            print("Log out")
+            if results:
+                with open("results.txt", "a") as file_out:
+                    # Writing data to a file
+                    file_out.write(f"----------------------------\n")
+                    file_out.write(f"Avarage score: {average_score}\n")
+        else:
+            print("Beginning a new game...")
+            update = True
+            before_action = True
+            my_info = Info() #reset info
 
 def is_hint_safe(hint):
     cards = my_info.players[hint[1]]['cards'] #cards of the player "hinted"
@@ -291,7 +312,10 @@ def is_hint_safe(hint):
             if cards[i].color == hint[3]:
                 return False
     return True
-             
+
+#def is_hint_not_misunderstandable(hint): #if there is already a card on the table that is the card before the hinted one is misunderstandable!!!
+#
+#              
 def compare_hints(value_hint, color_hint): #count how many cards are touched giving value hint or color hint
         cards = my_info.players[value_hint[1]]['cards'] 
         touched_v = 0
@@ -330,7 +354,7 @@ def select_action():
             if color_hint != None:
                 ## Check if there exists a deck that actually fits this hint and then play; otherwise try to discard it. IT DEPENDS!!!
                 for color in card_colors:
-                    if my_info.table_cards[color] != 5:
+                    if my_info.table_cards[color] != 5: # ????  if my_info.table_cards[color_hint] != 5
                         return ('play', i)
                 if my_info.rem_clues < 8:
                     return ('discard', i)
@@ -363,7 +387,7 @@ def select_action():
             if my_info.rem_mistakes > 1:
                 return ('play', 0)
 
-        ## Discard your last unclued card
+        ## Discard your last unclued card COME SCARTA LE CARTE??
         if my_info.rem_clues < 8:
             for i in range(len(my_info.my_cards)-1, -1, -1): #from my last card
                 if my_info.my_cards[i][0] == None and my_info.my_cards[i][1] == None: #if it's totally unclued
@@ -371,6 +395,36 @@ def select_action():
                         return ('discard', i-1)
                     else:
                         return ('discard', i-1)
+        #THIS PART WOULD BE CHANGE WITH QL LEARNING
+        else: #I cannot discard neither play hinted cards: i hint card less useful --> "i suggest you to discard it or keep it for later"
+            print("\nLAST CASE!\n")
+            next_player_idx = (my_info.my_turn_idx + 1) % my_info.num_players #try to suggest to keep a card for later
+            for i in range(my_info.num_players-1): 
+                player_name = my_info.idx_player[next_player_idx]
+                player_cards = my_info.players[player_name]['cards']
+                for i, card in enumerate(player_cards):
+                    if card.value == 5: #prioritize 5 hint value if there is !!! (or ADD ALSO FOR DANGEROUS CARDS - last one remaining)
+                        hint_value = (my_info.my_name, player_name, 'value', card.value, i)
+                        return ('hint', player_name, hint_value[3])
+                    for idx in range(2,5):
+                        if my_info.table_cards[card.color]+idx == card.value: # player has a next card for that color
+                            hint_value = (my_info.my_name, player_name, 'value', card.value, i)
+                            return ('hint', player_name, hint_value[3])
+
+                next_player_idx = (next_player_idx + 1) % my_info.num_players
+            next_player_idx = (my_info.my_turn_idx + 1) % my_info.num_players #all cards of all players are useless also for the future, suggest to discard
+            for i in range(my_info.num_players-1): 
+                player_name = my_info.idx_player[next_player_idx]
+                player_cards = my_info.players[player_name]['cards']
+                for i, card in enumerate(player_cards):
+                    hint_value = (my_info.my_name, player_name, 'value', card.value, i)
+                    hint_color = (my_info.my_name, player_name, 'color', card.color, i)
+                    ## Give a hint that touches fewer cards
+                    if compare_hints(hint_value, hint_color) == 0: # hint on value touches more cards (to be discarded)
+                            return ('hint', player_name, hint_color[3])
+                    else: # hint on color touches more cards (to be discarded)
+                            return ('hint', player_name, hint_value[3])
+                next_player_idx = (next_player_idx + 1) % my_info.num_players
 
         """ ## Using the q-table (that is being updated constantly) to choose an action as a last resort 
         a = np.argmax(self.q_table[self.state])
@@ -380,7 +434,7 @@ def select_action():
             a = 1
 
         if a == 0:
-            ## dicard
+            ## discard
             for idx, card in enumerate(self.my_cards):
                 if card[0] == None and card[1] == None:
                     return ('d', idx)
@@ -431,18 +485,20 @@ def manageInput():
     global run
     global status
     global update
+    global before_action
     while run:
         if status != "Lobby":
             if my_info.init is not True: 
                 s.send(GameData.ClientGetGameStateRequest(playerName).serialize())
             while my_info.my_turn == False:
                 time.sleep(sleeptime)
-                if update:
+                if update and run:
                     s.send(GameData.ClientGetGameStateRequest(playerName).serialize())
                 pass
             update = False
             my_info.my_turn = False
             s.send(GameData.ClientGetGameStateRequest(playerName).serialize()) #like "show" command in client.py, it gives the actual knowledge for the actual player
+            before_action = True
             action = select_action()
             command = action_to_command(action)
             if True: # if verbose_action:
@@ -550,31 +606,43 @@ with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
 
         if type(data) is GameData.ServerActionValid: #discard feedback
             dataOk = True
-            print(f"Discard action valid! Discarded ({data.card.color}, {data.card.value})")
+            print(f"Discard action valid! Player {data.lastPlayer} discarded ({data.card.color}, {data.card.value})")
             print("Current player: " + data.player)
             discard_feedback(data)
             update = True
 
         if type(data) is GameData.ServerPlayerMoveOk: #good play feedback
             dataOk = True
-            print(f"Nice move! Played ({data.card.color}, {data.card.value})")
+            print(f"Nice move! Player {data.lastPlayer} played ({data.card.color}, {data.card.value})")
             print("Current player: " + data.player)
             niceMove_feedback(data)
             update = True
 
         if type(data) is GameData.ServerPlayerThunderStrike: #bad play feedback
             dataOk = True
-            print(f"OH NO! The Gods are unhappy with you! Tried to play ({data.card.color}, {data.card.value})")
+            print(f"OH NO! The Gods are unhappy with you! Player {data.lastPlayer} tried to play ({data.card.color}, {data.card.value})")
             badMove_feedback(data)
+            update = True
+
+        if type(data) is GameData.ClientHintData: #hint given from this agent
+            dataOk = True
+            parse_hint_data(data)
+            print("Hint type: " + data.type)
+            print(f"From player {data.source}")
+            print("\tPlayer " + data.destination + " cards with value " + str(data.value) + " are:")
+            for i in data.positions:
+                print("\t\t" + str(i))
             update = True
 
         if type(data) is GameData.ServerHintData: #hint given to this agent
             dataOk = True
             parse_hint_data(data)
             print("Hint type: " + data.type)
-            print("Player " + data.destination + " cards with value " + str(data.value) + " are:")
+            print(f"From player {data.source}")
+            print("\tPlayer " + data.destination + " cards with value " + str(data.value) + " are:")
             for i in data.positions:
-                print("\t" + str(i))
+                print("\t\t" + str(i))
+            update = True
 
         if type(data) is GameData.ServerInvalidDataReceived:
             dataOk = True
@@ -593,6 +661,7 @@ with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         if not dataOk:
             print("Unknown or unimplemented data type: " +  str(type(data)))
 
-        if hasattr(data, 'currentPlayer') and data.currentPlayer == playerName and update:
+        if hasattr(data, 'currentPlayer') and data.currentPlayer == playerName and before_action:
             print("[" + playerName + " - " + status + "]: ", end="")
+            before_action = False
         stdout.flush()

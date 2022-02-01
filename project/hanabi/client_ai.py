@@ -32,6 +32,8 @@ run = True
 
 debug = False
 
+verbose = False
+
 statuses = ["Lobby", "Game", "GameHint"]
 
 status = statuses[0]
@@ -58,7 +60,8 @@ def set_knowledge(data):
     time.sleep(sleeptime)
     if data.currentPlayer == playerName and update:
             my_knowledge.my_turn = True
-            print(my_knowledge.toString())
+            if verbose:
+                print(my_knowledge.toString())
 
 def discard_update(data):
     global my_knowledge 

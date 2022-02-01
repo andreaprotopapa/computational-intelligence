@@ -26,7 +26,10 @@ class Knowledge(object):
         if data is not None:
             self.init = True
             self.my_name = playerName
-            self.my_cards = [(None, None,0), (None, None,0), (None, None,0), (None, None,0), (None, None,0)]
+            if len(data.players) < 4:
+                self.my_cards = [(None, None, 0) for _ in range(5)]
+            else:
+                self.my_cards = [(None, None, 0) for _ in range(4)]     
             self.my_cards_clued = 0
             self.handSize = len(self.my_cards)
             self.my_turn = False
@@ -127,6 +130,6 @@ class Knowledge(object):
                 + "Hints for you: " + str(self.my_cards) + "\n"
                 + "Table cards: \n" + table_cards + "\n"
                 + "Discard pile: \n" + discard_pile + "\n"
-                + f"Cards remaining: {self.num_deck_cards}\n"
+                + f"Cards remaining: {max(self.num_deck_cards, 0)}\n"
                 + "Note tokens used: " + str(8-self.blue_tokens) + "/8" + "\n"
                 + "Storm tokens used: " + str(3-self.red_tokens) + "/3" + "\n")

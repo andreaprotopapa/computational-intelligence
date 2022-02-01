@@ -9,6 +9,7 @@ import socket
 from constants import *
 import os
 import time
+from knowledge import Knowledge
 
 
 if len(argv) < 5:
@@ -19,13 +20,17 @@ if len(argv) < 5:
     ip = HOST
     port = PORT
     results = True
+    num_games_limit = 2
 else:
     playerName = argv[3]
     ip = argv[1]
     port = int(argv[2])
-    results = argv[4]
+    results = argv[4] == "True"
+    num_games_limit = int(argv[5])
 
 run = True
+
+debug = False
 
 statuses = ["Lobby", "Game", "GameHint"]
 
@@ -37,221 +42,86 @@ hintState = ("", "")
 
 num_games = 0
 average_score = 0.0
-num_games_limit = 100
 
 update = True
 sleeptime = 0.01
 before_action = True
 
+my_knowledge = Knowledge(playerName) # all agent knowledge is here
 
-class Info(object):
-    """Info object for all the actual information of the agent\n
-        'my_name': client agent's name
-        'my_cards': [list of hintState tuples on agent's cards]
-        'my_cards_clued': # of cards clued in agent's hand
-        'my_turn': bool
-        'my_turn_idx': int
-        'my_available_actions': [list of possible actions for the agent]
-
-        'player_names': [list of all the other players' names]\n
-        'players': {'player_name': {'turn': turn, 'cards': [list of Card objs]}}\n
-        'num_players': # total number of players\n
-        'num_deck_cards': # actual number of desk cards\n
-        'table_cards':  {'red':  n_red, 'blue': n_blue, 'yellow': n_yellow, 'green': n_green, 'white': n_white}\n
-        'discard_pile': {'red':[n_red], 'blue':[n_blue], 'yellow':[n_yellow], 'green':[n_green], 'white':[n_white]}\n
-        'rem_clues':    # remaining number blue tokens\n 
-        'rem_mistakes': # remaining number red tokens\n
-
-        'player_idx': {'player_name': #turn index}\n
-        'idx_player': {'idx_player':  #player name}\n
-        'currentPlayer': current player's name\n
-        'last_round': bool
-    """
-    def __init__(self, data=None) -> None:
-        super().__init__()
-        if data is not None:
-            self.init = True
-            self.my_name = playerName
-            self.my_cards = [(None, None), (None, None), (None, None), (None, None), (None, None)]
-            self.my_cards_clued = 0
-            self.handSize = len(self.my_cards)
-            self.my_turn = False
-            self.my_turn_idx = None
-            self.my_available_actions = []
-
-            self.player_names = [player.name for player in data.players if player.name != playerName] # all the other players' names
-
-            self.players = dict() # all the other players
-            self.num_players = len(data.players) # total number of players
-            self.num_deck_cards = int(50 - self.num_players*5)
-            self.table_cards = {'red': 0, 'yellow': 0, 'green': 0, 'blue': 0, 'white': 0}
-            self.discard_pile = {   'red': {1: 0, 2: 0, 3:0, 4:0, 5:0},
-                                    'yellow': {1: 0, 2: 0, 3:0, 4:0, 5:0},
-                                    'green': {1: 0, 2: 0, 3:0, 4:0, 5:0},
-                                    'blue': {1: 0, 2: 0, 3:0, 4:0, 5:0},
-                                    'white': {1: 0, 2: 0, 3:0, 4:0, 5:0}}
-            self.rem_clues = 8
-            self.rem_mistakes = 3
-
-            self.player_idx = {} # ???
-            self.idx_player = {} # ???
-
-            for p in self.player_names: #set players
-                self.players[p] = {'turn': -1, 'cards': []}
-            for i in range(len(data.players)):
-                if data.players[i].name == playerName:
-                    self.my_turn_idx = i
-                else:
-                    self.players[data.players[i].name]['turn'] = i
-                    self.players[data.players[i].name]['cards'] = data.players[i].hand
-                    self.player_idx[data.players[i].name] = i # ???
-                    self.idx_player[i] = data.players[i].name # ???
-        
-            self.current_player = data.currentPlayer
-            self.last_round = False
-        else:
-            self.init = False
-            self.my_turn = False
-            self.my_name = playerName
-
-    def updateInfo(self, data):
-        for i in range(len(data.players)): #set cards for each player's hand I can see
-            if i != self.my_turn_idx:
-                self.players[data.players[i].name]['cards'] = data.players[i].hand
-
-        for color in data.tableCards: #set table cards
-            if len(data.tableCards[color]) > 0:
-                self.table_cards[color] = max([c.value for c in data.tableCards[color]])
-
-        self.discard_pile = {   'red': {1: 0, 2: 0, 3:0, 4:0, 5:0}, #reset discard pile
-                                'yellow': {1: 0, 2: 0, 3:0, 4:0, 5:0},
-                                'green': {1: 0, 2: 0, 3:0, 4:0, 5:0},
-                                'blue': {1: 0, 2: 0, 3:0, 4:0, 5:0},
-                                'white': {1: 0, 2: 0, 3:0, 4:0, 5:0}}
-        for card in data.discardPile: #set discard pile
-            self.discard_pile[card.color][card.value] += 1
-
-        self.rem_clues = 8 - data.usedNoteTokens #set remaining clues
-        self.rem_mistakes = 3 - data.usedStormTokens #set remaining mistakes
-
-        ### actions:    ('discard', 3)              --> discard cart 3 
-        #               ('play', 5)                 --> play cart 5
-        #               ('hint', 'agent_1', 'blue') --> hint player agent_1 'blue'
-        #               ('hint', 'agent_2', 1)      --> hint player agent_2 number '1'
-        self.my_available_actions = [('play',0), ('play', 1), ('play', 2), ('play', 3), ('play', 4)]  # playing is always permissible (last round?)
-
-        ### Calculating available hints
-        if self.rem_clues > 0:
-            # hint actions
-            hints_set = set()
-            for player in self.players:
-                    for card in self.players[player]['cards']:
-                        hints_set.add(('hint', player, card.color))
-                        hints_set.add(('hint', player, card.value))
-            for action in hints_set:
-                self.my_available_actions.append(action)
-        if self.rem_clues != 8: # discard is good (so, valid) only if I can get back a blue token
-            # discard actions
-            if self.last_round:
-                self.my_available_actions.extend([('discard',0), ('discard', 1), ('discard', 2), ('discard', 3), ('discard', 4)])
-        self.current_player = data.currentPlayer
-
-
-    def toString(self):
-        players_hands = ""
-        for p in self.players:
-            players_hands += f"\tPlayer {p}:\n"
-            for card in self.players[p]['cards']:
-                players_hands += f"\t\t({card.color}, {card.value})\n"
-        table_cards = ''.join(f"\t{color}: [ {self.table_cards[color]} ]" for color in self.table_cards)
-        discard_pile = ''.join([f"\t{color}: [ {self.discard_pile[color]} ]\n" for color in self.discard_pile])
-        return (  "\nYour name: " + self.my_name + "\n"
-                + "Current player: " + self.current_player + "\n"
-                + "Player hands: \n" + players_hands + "\n"
-                + f"Cards in your hand: {self.handSize}\n"
-                + "Hints for you: " + str(self.my_cards) + "\n"
-                + "Table cards: \n" + table_cards + "\n"
-                + "Discard pile: \n" + discard_pile + "\n"
-                + f"Cards remaining: {self.num_deck_cards}\n"
-                + "Note tokens used: " + str(8-self.rem_clues) + "/8" + "\n"
-                + "Storm tokens used: " + str(3-self.rem_mistakes) + "/3" + "\n")
-
-my_info = Info() # all agent knowledge is here
-
-
-def parse_game_data(data):
-    global my_info
-    if my_info.init is False: #init Info
-        my_info = Info(data)
+def set_knowledge(data):
+    global my_knowledge
+    if my_knowledge.init is False: #init Info
+        my_knowledge = Knowledge(playerName,data)
     else:
-        my_info.updateInfo(data)
+        my_knowledge.updateKnowledge(data)
     time.sleep(sleeptime)
     if data.currentPlayer == playerName and update:
-            my_info.my_turn = True
-            print(my_info.toString())
+            my_knowledge.my_turn = True
+            print(my_knowledge.toString())
 
-def discard_feedback(data):
-    global my_info 
-    my_info.num_deck_cards -= 1
-    my_info.rem_clues += 1
+def discard_update(data):
+    global my_knowledge 
+    my_knowledge.num_deck_cards -= 1
+    my_knowledge.blue_tokens += 1
     if data.handLength < 5:
-        my_info.last_round = True
-    if data.lastPlayer == my_info.my_name:
-        if my_info.my_cards[data.cardHandIndex][0] != None or my_info.my_cards[data.cardHandIndex][1] != None:
-            my_info.my_cards_clued -= 1
-        my_info.my_cards[data.cardHandIndex] = (None, None)
+        my_knowledge.last_round = True
+    if data.lastPlayer == my_knowledge.my_name:
+        if my_knowledge.my_cards[data.cardHandIndex][0] != None or my_knowledge.my_cards[data.cardHandIndex][1] != None: #if I had clues on that card
+            my_knowledge.my_cards_clued -= 1
+        my_knowledge.my_cards.pop(data.cardHandIndex)
+        my_knowledge.my_cards.append((None, None, 0))
 
-def niceMove_feedback(data):
-    global my_info
-    my_info.num_deck_cards -= 1
+def niceMove_update(data):
+    global my_knowledge
+    my_knowledge.num_deck_cards -= 1
     #TODO (Apparantly not supported by the server!)
-    # if data.card.value == 5 and my_info.rem_clues < 8:
-    #     my_info.rem_clues += 1
+    # if data.card.value == 5 and my_knowledge.blue_tokens < 8:
+    #     my_knowledge.blue_tokens += 1
     if data.handLength < 5:
-        my_info.last_round = True
-    if data.lastPlayer == my_info.my_name:
-        if my_info.my_cards[data.cardHandIndex][0] != None or my_info.my_cards[data.cardHandIndex][1] != None:
-            my_info.my_cards_clued -= 1
-        my_info.my_cards[data.cardHandIndex] = (None, None)
+        my_knowledge.last_round = True
+    if data.lastPlayer == my_knowledge.my_name:
+        if my_knowledge.my_cards[data.cardHandIndex][0] != None or my_knowledge.my_cards[data.cardHandIndex][1] != None: #if I had clues on that card
+            my_knowledge.my_cards_clued -= 1
+        my_knowledge.my_cards.pop(data.cardHandIndex)
+        my_knowledge.my_cards.append((None, None, 0))
 
-def badMove_feedback(data):
-    global my_info
-    my_info.num_deck_cards -= 1
-    my_info.rem_mistakes -= 1
+def badMove_update(data):
+    global my_knowledge
+    my_knowledge.num_deck_cards -= 1
+    my_knowledge.red_tokens -= 1
     if data.handLength < 5:
-        my_info.last_round = True
-    if data.lastPlayer == my_info.my_name: #my fault
-        if my_info.my_cards[data.cardHandIndex][0] != None or my_info.my_cards[data.cardHandIndex][1] != None:
-            my_info.my_cards_clued -= 1
-        my_info.my_cards[data.cardHandIndex] = (None, None)
+        my_knowledge.last_round = True
+    if data.lastPlayer == my_knowledge.my_name: #my fault
+        if my_knowledge.my_cards[data.cardHandIndex][0] != None or my_knowledge.my_cards[data.cardHandIndex][1] != None: #if I had clues on that card
+            my_knowledge.my_cards_clued -= 1
+        my_knowledge.my_cards.pop(data.cardHandIndex)
+        my_knowledge.my_cards.append((None, None, 0))
 
-def parse_hint_data(data):
-    global my_info
-    hint = {'giver'     :   data.source,
-            'receiver'  :   data.destination, 
-            'type'      :   data.type,
-            'val'       :   data.value,
-            'positions' :   data.positions}
-    my_info.rem_clues -= 1
-    if hint['receiver'] == my_info.my_name:
-        for i in hint['positions']:
-            ### THEORY OF MIND: To avoid misplays, we only memorize the first position !!! I DONT LIKE, FOR FIRST COULD BE DANGEROUS!!!
-            if hint['type'] == 'value':
-                if my_info.my_cards[i][0] == None and my_info.my_cards[i][1] == None:
-                    my_info.my_cards_clued += 1
-                my_info.my_cards[i] = (hint['val'], my_info.my_cards[i][1])
+
+def set_new_hint(hint):
+    global my_knowledge
+
+    my_knowledge.blue_tokens -= 1
+    if hint.destination == my_knowledge.my_name:
+        for i in hint.positions:
+            if hint.type == 'value':
+                if my_knowledge.my_cards[i][0] == None and my_knowledge.my_cards[i][1] == None:
+                    my_knowledge.my_cards_clued += 1
+                my_knowledge.my_cards[i] = (hint.value, my_knowledge.my_cards[i][1],1)
             else:
-                if my_info.my_cards[i][0] == None and my_info.my_cards[i][1] == None:
-                    my_info.my_cards_clued += 1
-                my_info.my_cards[i] = (my_info.my_cards[i][0], hint['val'])
-            break
+                if my_knowledge.my_cards[i][0] == None and my_knowledge.my_cards[i][1] == None:
+                    my_knowledge.my_cards_clued += 1
+                my_knowledge.my_cards[i] = (my_knowledge.my_cards[i][0], hint.value,1)
     
-    #my_info.hint_history.add((data.source, data.destination, data.type, data.value))
+    #my_knowledge.hint_history.add((data.source, data.destination, hint.type, hint.value))
 
-    """ reward = self.info['rem_clues']-self.num_players
+    """
+    # Q-Learning part
+    reward = self.info['blue_tokens']-self.num_players
 
-    next_state = (int(self.last_round), self.coarse_coding_rem_clues(),\
-            3-self.info['rem_mistakes'], self.coarse_coding_score(), int(self.my_cards_clued > 0))
+    next_state = (int(self.last_round), self.coarse_coding_blue_tokens(),\
+            3-self.info['red_tokens'], self.coarse_coding_score(), int(self.my_cards_clued > 0))
     if next_state not in self.q_table:
         self.q_table[next_state] = [0.,0.,0.]
     self.q_table[self.state][1] = self.q_table[self.state][1] + self.alpha*(reward\
@@ -259,8 +129,8 @@ def parse_hint_data(data):
                 self.q_table[self.state][1])
     self.state = next_state """
 
-def process_game_over(score):
-    global my_info
+def game_over(score):
+    global my_knowledge
     global run
     global num_games
     global average_score
@@ -268,169 +138,260 @@ def process_game_over(score):
     global update
     global before_action
     global results
-    print(f"\nThis game is over with final score {score}. "
-    f"{max(my_info.num_deck_cards, 0)} cards remained in the deck. The final table cards: {my_info.table_cards}. ")
+    print(f"\nGame n.{num_games}: score {score}.")
+    print(f"{max(my_knowledge.num_deck_cards, 0)} still in the deck.")
+    print(f"Final table cards: {my_knowledge.table_cards}.")
     
     if results:
         if num_games == 0: 
             mode = "w"
         else:
             mode = "a"
-        with open("results.txt", mode) as file_out:
-            # Writing data to a file
+        with open(f"results_{my_knowledge.num_players}.txt", mode) as file_out:
             file_out.write(f"Game n.{num_games}: {score} \n")
 
     num_games += 1
     average_score = (average_score * (num_games-1)+score)/num_games
-    print(f"Games played so far: {num_games}. Average score in the tournament so far: {average_score}")
-    
-    ## For DEBUGGING
-    #tmp = input()
+    print(f"Games played so far: {num_games}. Actual average score: {average_score}")
+
     if num_games_limit != None:
         if num_games >= num_games_limit:
             run = False
             print("Log out")
             if results:
-                with open("results.txt", "a") as file_out:
-                    # Writing data to a file
+                with open(f"results_{my_knowledge.num_players}.txt", "a") as file_out:
                     file_out.write(f"----------------------------\n")
                     file_out.write(f"Avarage score: {average_score}\n")
+            os._exit(0)
         else:
             print("Beginning a new game...")
             update = True
             before_action = True
-            my_info = Info() #reset info
+            my_knowledge = Knowledge(playerName) #reset info
 
 def is_hint_safe(hint):
-    cards = my_info.players[hint[1]]['cards'] #cards of the player "hinted"
+    cards = my_knowledge.players[hint[1]]['cards'] #cards of the player "hinted"
     if hint[2] == 'value':
-        for i in range(hint[4]): # for all cards before the hinted one
-            if cards[i].value == hint[3]: # if the card hinted as the same value of a card before it
+        for i in range(hint[4]+1,len(cards)): # for all cards before the hinted one
+            if cards[i].value == hint[3]: # if the card hinted has the same value of a card before it
                 return False
     else:
-        for i in range(hint[4]):
+        for i in range(hint[4]+1,len(cards)):
             if cards[i].color == hint[3]:
                 return False
     return True
 
-#def is_hint_not_misunderstandable(hint): #if there is already a card on the table that is the card before the hinted one is misunderstandable!!!
-#
-#              
+def is_hint_not_misunderstandable(hint,real_color): #if there is already a card on the table that is the card before the hinted one is misunderstandable!!!
+    if hint[2] == 'value' and hint[3]!=1:
+        for color in card_colors:
+            if color != real_color:
+                if my_knowledge.table_cards[color]+1 == hint[3]:
+                    return False
+    return True
+    
 def compare_hints(value_hint, color_hint): #count how many cards are touched giving value hint or color hint
-        cards = my_info.players[value_hint[1]]['cards'] 
-        touched_v = 0
-        touched_c = 0
+        cards = my_knowledge.players[value_hint[1]]['cards'] 
+        touched_from_valueHint = 0
+        touched_from_colorHint = 0
         for card in cards:
             if card.value == value_hint[3]:
-                touched_v += 1
+                touched_from_valueHint += 1
             if card.color == color_hint[3]:
-                touched_c += 1
-        if touched_v<=touched_c:
-            return 0
-        return 1
+                touched_from_colorHint += 1
+        if touched_from_valueHint<=touched_from_colorHint:
+            return 0 #return 0 if we touch less cards with value hint
+        return 1 #return 1 if we touch less cards with value hint
+
+def useful_for_later(value_hint):
+    for color in card_colors:
+        if my_knowledge.table_cards[color] < value_hint:
+            return True
+    return False        
+
+def last_remaining(card):
+            if card.value == 5:
+                return True
+            if card.value == 4 and my_knowledge.discard_pile[card.color][card.value] == 1:
+                return True
+            if card.value == 3 and my_knowledge.discard_pile[card.color][card.value] == 1:
+                return True
+            if card.value == 2 and my_knowledge.discard_pile[card.color][card.value] == 1:
+                return True
+            if card.value == 1 and my_knowledge.discard_pile[card.color][card.value] == 2:
+                return True
+            return False
 
 def select_action():
-        ### hard-coded agent
-        ## Iterate over your cards and play the most recent hinted card
-        for i, card in enumerate(my_info.my_cards):
-            value_hint = card[0]
-            color_hint = card[1]
-            ## prioritize completely known cards (both color and value) over others (and play, discard, or keep it)
-            if  value_hint != None and color_hint != None: #if I have two hints on that card
-                ## play
-                if my_info.table_cards[color_hint]+1 == value_hint:
-                    return ('play', i)
-                ## discard the useless card if possible
-                elif my_info.table_cards[color_hint]+1 > value_hint and my_info.rem_clues < 8:
-                    return ('discard', i)
-            ## Prioritize value hints over color hints 
-            if value_hint != None:
-                ## Check if there exists a deck that actually fits this hint and then play; otherwise try to discard it. IT DEPENDS!!!
-                for color in card_colors:
-                    if my_info.table_cards[color]+1 == value_hint:
-                        return ('play', i)
-                if my_info.rem_clues < 8: #TOO RISKY!! if a hint 5 I have not to discard!!!
-                    return ('discard', i)
-            if color_hint != None:
-                ## Check if there exists a deck that actually fits this hint and then play; otherwise try to discard it. IT DEPENDS!!!
-                for color in card_colors:
-                    if my_info.table_cards[color] != 5: # ????  if my_info.table_cards[color_hint] != 5
-                        return ('play', i)
-                if my_info.rem_clues < 8:
-                    return ('discard', i)
-
-        ## Iterate over your teammates' hands and hint any immediate play (hint first to the opponents that play sooner.)
-        ## Care ADDED about other cards that may be touched!
-        if my_info.rem_clues > 0:
-            next_player_idx = (my_info.my_turn_idx + 1) % my_info.num_players
-            for i in range(my_info.num_players-1):
-                player_name = my_info.idx_player[next_player_idx]
-                player_cards = my_info.players[player_name]['cards']
-                for i, card in enumerate(player_cards):
-                    if my_info.table_cards[card.color]+1 == card.value: # player has the next card for that color
-                        hint_value = (my_info.my_name, player_name, 'value', card.value, i)
-                        hint_color = (my_info.my_name, player_name, 'color', card.color, i)
-                        ## Give a hint that touches fewer cards
-                        if compare_hints(hint_value, hint_color) == 0: # hint on value touches less cards
-                            ### THEORY OF MIND: To avoid misplays, we only give hints that do not touch dangerous cards before the hinted one
-                            if is_hint_safe(hint_value):
-                                return ('hint', player_name, hint_value[3])
-                        else: # hint on color touches less cards
-                            ### THEORY OF MIND: To avoid misplays, we only give hints that do not touch dangerous cards before the hinted one
-                            if is_hint_safe(hint_color):
-                                return ('hint', player_name, hint_color[3])
-
-                next_player_idx = (next_player_idx + 1) % my_info.num_players
+        # HARD-CODED AGENT
+        # Hint dangerous cases
+        # next_player_idx = (my_knowledge.my_turn_idx + 1) % my_knowledge.num_players
+        # for _ in range(my_knowledge.num_players-1): #for all the other players
+        #     player_name = my_knowledge.idx_player[next_player_idx]
+        #     player_cards = my_knowledge.players[player_name]['cards']
+        #     for i, card in enumerate(player_cards): #for all player's cards
+        #         if last_remaining(card):
+        #             hint_value = (my_knowledge.my_name, player_name, 'value', card.value, i)
+        #             return ('hint', player_name, hint_value[3])
+        #     next_player_idx = (next_player_idx + 1) % my_knowledge.num_players
 
         ## Last round (play the newest card if we have more than one storm tokens available)
-        if my_info.last_round:
-            if my_info.rem_mistakes > 1:
-                return ('play', 0)
+        if my_knowledge.last_round:
+            if my_knowledge.red_tokens > 1 and my_knowledge.num_deck_cards > 0:
+                return ('play', my_knowledge.handSize -1 )
+            # elif my_knowledge.blue_tokens < 8 and my_knowledge.num_deck_cards > 0:
+            #     return ('discard', 0)
+            # else:
+            #     player_name =  my_knowledge.player_names[0]
+            #     return ('hint', player_name, my_knowledge.players[player_name]['cards'][0].value) #random hint as last chance for very last
 
-        ## Discard your last unclued card COME SCARTA LE CARTE??
-        if my_info.rem_clues < 8:
-            for i in range(len(my_info.my_cards)-1, -1, -1): #from my last card
-                if my_info.my_cards[i][0] == None and my_info.my_cards[i][1] == None: #if it's totally unclued
-                    if i == 4 and my_info.last_round:
-                        return ('discard', i-1)
-                    else:
-                        return ('discard', i-1)
-        #THIS PART WOULD BE CHANGE WITH QL LEARNING
-        else: #I cannot discard neither play hinted cards: i hint card less useful --> "i suggest you to discard it or keep it for later"
-            print("\nLAST CASE!\n")
-            next_player_idx = (my_info.my_turn_idx + 1) % my_info.num_players #try to suggest to keep a card for later
-            for i in range(my_info.num_players-1): 
-                player_name = my_info.idx_player[next_player_idx]
-                player_cards = my_info.players[player_name]['cards']
-                for i, card in enumerate(player_cards):
-                    if card.value == 5: #prioritize 5 hint value if there is !!! (or ADD ALSO FOR DANGEROUS CARDS - last one remaining)
-                        hint_value = (my_info.my_name, player_name, 'value', card.value, i)
-                        return ('hint', player_name, hint_value[3])
-                    for idx in range(2,5):
-                        if my_info.table_cards[card.color]+idx == card.value: # player has a next card for that color
-                            hint_value = (my_info.my_name, player_name, 'value', card.value, i)
+        # Play/Discard rules with hints 
+        for i, card in reversed(list(enumerate(my_knowledge.my_cards))): # look from the newest card (= the most right)
+            value_hint = card[0]
+            color_hint = card[1]
+            age_hint = card[2]
+            # prioritize "completely known" cards (both color and value)
+            if  value_hint != None and color_hint != None: #if I have two hints on that card
+                # play
+                if my_knowledge.table_cards[color_hint]+1 == value_hint:
+                    return ('play', i)
+            # Prioritize value hints over color hints 
+            if value_hint != None and color_hint == None: # CONVENTION: Value Hint --> Keep for later
+                ## Check if there exists a firework that actually fits this hint and then play; otherwise try to discard it.
+                for color in card_colors:
+                    if my_knowledge.table_cards[color]+1 == value_hint and age_hint == 1:
+                        return ('play', i)
+            if color_hint != None and value_hint == None: # CONVENTION: Color Hint --> Play it immediately
+                ## Check if there exists a firework that actually misses cards and if the hint is new
+                if my_knowledge.table_cards[color_hint] != 5: 
+                    if age_hint == 1:
+                        return ('play', i)
+
+        # Hint rules
+        if my_knowledge.blue_tokens > 0:
+            next_player_idx = (my_knowledge.my_turn_idx + 1) % my_knowledge.num_players
+            for _ in range(my_knowledge.num_players-1): #for all the other players
+                player_name = my_knowledge.idx_player[next_player_idx]
+                player_cards = my_knowledge.players[player_name]['cards']
+                for i, card in reversed(list(enumerate(player_cards))): #for all player's cards
+                    if my_knowledge.table_cards[card.color]+1 == card.value: # player has the next card for that color
+                        hint_value = (my_knowledge.my_name, player_name, 'value', card.value, i)
+                        hint_color = (my_knowledge.my_name, player_name, 'color', card.color, i)
+                        # Give a hint that touches fewer cards
+                        if compare_hints(hint_value, hint_color) == 0 or hint_value == 1: # hint on value touches less cards
+                            if is_hint_safe(hint_value): # To avoid misplays, we only give hints that do not touch dangerous cards before the hinted one
+                            #if is_hint_not_misunderstandable(hint_value,card.color):
+                                return ('hint', player_name, hint_value[3])
+                            elif is_hint_safe(hint_color):
+                                return ('hint', player_name, hint_color[3])
+                        else: # hint on color touches less cards
+                            if is_hint_safe(hint_color): # To avoid misplays, we only give hints that do not touch dangerous cards before the hinted one
+                                return ('hint', player_name, hint_color[3])
+                for i, card in enumerate(player_cards): #for all player's cards
+                    if last_remaining(card):
+                        if card not in my_knowledge.my_last_remaining_hints:
+                            my_knowledge.my_last_remaining_hints.append(card)
+                            hint_value = (my_knowledge.my_name, player_name, 'value', card.value, i)
+                            if is_hint_not_misunderstandable(hint_value,card.color):
+                                return ('hint', player_name, hint_value[3])
+                next_player_idx = (next_player_idx + 1) % my_knowledge.num_players
+
+        ## Discard your oldest unclued card (oldest --> most left)
+        if my_knowledge.blue_tokens < 8:
+             for i, card in enumerate(my_knowledge.my_cards): #from my oldest card ( = the first in the list)
+                value_hint = card[0]
+                color_hint = card[1]
+                age_hint = card[2]
+                if value_hint == None and color_hint == None: #if it's totally unclued
+                    return ('discard', i)
+                if value_hint != None and color_hint == None:
+                    if not useful_for_later(value_hint):
+                        return ('discard', i)
+                if color_hint != None and value_hint == None: 
+                    if my_knowledge.table_cards[color_hint] == 5: 
+                        return ('discard', i)
+                if  value_hint != None and color_hint != None: #if I have two hints on that card
+                    if my_knowledge.table_cards[color_hint]+1 > value_hint:
+                        return ('discard', i)
+        print("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA")
+        if my_knowledge.blue_tokens < 8:
+            return ('discard', 0)
+        else:
+            next_player_idx = (my_knowledge.my_turn_idx + 1) % my_knowledge.num_players #try to suggest to KEEP A CARD for later
+            for _ in range(my_knowledge.num_players-1): #for all the other players
+                player_name = my_knowledge.idx_player[next_player_idx]
+                player_cards = my_knowledge.players[player_name]['cards']
+                for i, card in enumerate(player_cards): #for all player's cards
+                    if my_knowledge.table_cards[card.color] < card.value: # player has a next card for that color
+                        hint_value = (my_knowledge.my_name, player_name, 'value', card.value, i)
+                        if is_hint_not_misunderstandable(hint_value,card.color):
+                            print("KEEP IT")
                             return ('hint', player_name, hint_value[3])
-
-                next_player_idx = (next_player_idx + 1) % my_info.num_players
-            next_player_idx = (my_info.my_turn_idx + 1) % my_info.num_players #all cards of all players are useless also for the future, suggest to discard
-            for i in range(my_info.num_players-1): 
-                player_name = my_info.idx_player[next_player_idx]
-                player_cards = my_info.players[player_name]['cards']
-                for i, card in enumerate(player_cards):
-                    hint_value = (my_info.my_name, player_name, 'value', card.value, i)
-                    hint_color = (my_info.my_name, player_name, 'color', card.color, i)
-                    ## Give a hint that touches fewer cards
+                next_player_idx = (next_player_idx + 1) % my_knowledge.num_players
+            next_player_idx = (my_knowledge.my_turn_idx + 1) % my_knowledge.num_players #all cards of all players are useless also for the future, suggest to DISCARD
+            for _ in range(my_knowledge.num_players-1): #for all the other players
+                player_name = my_knowledge.idx_player[next_player_idx]
+                player_cards = my_knowledge.players[player_name]['cards']
+                for i, card in enumerate(player_cards): #for all player's cards
+                    hint_value = (my_knowledge.my_name, player_name, 'value', card.value, i)
+                    hint_color = (my_knowledge.my_name, player_name, 'color', card.color, i)
+                    print("DISCARD IT")
+                    ## Give a hint that touches more cards
                     if compare_hints(hint_value, hint_color) == 0: # hint on value touches more cards (to be discarded)
                             return ('hint', player_name, hint_color[3])
                     else: # hint on color touches more cards (to be discarded)
                             return ('hint', player_name, hint_value[3])
-                next_player_idx = (next_player_idx + 1) % my_info.num_players
+                next_player_idx = (next_player_idx + 1) % my_knowledge.num_players
+        
+
+        #THIS PART WOULD BE CHANGE WITH QL LEARNING
+        # else: #I cannot discard neither play hinted cards: i hint card less useful --> "i suggest you to discard it or keep it for later"
+        #     if my_knowledge.blue_tokens > 0:
+        #         print("\nLAST CASE!\n")
+        #         next_player_idx = (my_knowledge.my_turn_idx + 1) % my_knowledge.num_players #try to suggest to KEEP A CARD for later
+        #         for _ in range(my_knowledge.num_players-1): #for all the other players
+        #             player_name = my_knowledge.idx_player[next_player_idx]
+        #             player_cards = my_knowledge.players[player_name]['cards']
+        #             for i, card in enumerate(player_cards): #for all player's cards
+        #                 if last_remaining(card):
+        #                     hint_value = (my_knowledge.my_name, player_name, 'value', card.value, i)
+        #                     return ('hint', player_name, hint_value[3])
+        #                 if my_knowledge.table_cards[card.color] < card.value: # player has a next card for that color
+        #                     hint_value = (my_knowledge.my_name, player_name, 'value', card.value, i)
+        #                     return ('hint', player_name, hint_value[3])
+
+        #             next_player_idx = (next_player_idx + 1) % my_knowledge.num_players
+
+        #         next_player_idx = (my_knowledge.my_turn_idx + 1) % my_knowledge.num_players #all cards of all players are useless also for the future, suggest to DISCARD
+        #         for _ in range(my_knowledge.num_players-1): #for all the other players
+        #             player_name = my_knowledge.idx_player[next_player_idx]
+        #             player_cards = my_knowledge.players[player_name]['cards']
+        #             for i, card in enumerate(player_cards): #for all player's cards
+        #                 hint_value = (my_knowledge.my_name, player_name, 'value', card.value, i)
+        #                 hint_color = (my_knowledge.my_name, player_name, 'color', card.color, i)
+        #                 ## Give a hint that touches more cards
+        #                 if compare_hints(hint_value, hint_color) == 0: # hint on value touches more cards (to be discarded)
+        #                         return ('hint', player_name, hint_color[3])
+        #                 else: # hint on color touches more cards (to be discarded)
+        #                         return ('hint', player_name, hint_value[3])
+        #             next_player_idx = (next_player_idx + 1) % my_knowledge.num_players
+        # if my_knowledge.blue_tokens > 0:
+        #     print("\nLAST CASE!\n")
+        #     next_player_idx = (my_knowledge.my_turn_idx + 1) % my_knowledge.num_players #try to suggest to KEEP A CARD for later
+        #     for _ in range(my_knowledge.num_players-1): #for all the other players
+        #         player_name = my_knowledge.idx_player[next_player_idx]
+        #         player_cards = my_knowledge.players[player_name]['cards']
+        #         for i, card in enumerate(player_cards): #for all player's cards
+        #             if last_remaining(card):
+        #                 hint_value = (my_knowledge.my_name, player_name, 'value', card.value, i)
+        #                 return ('hint', player_name, hint_value[3])
+        #         next_player_idx = (next_player_idx + 1) % my_knowledge.num_players
+
 
         """ ## Using the q-table (that is being updated constantly) to choose an action as a last resort 
         a = np.argmax(self.q_table[self.state])
-        if a == 1 and self.info['rem_clues'] == 0:
+        if a == 1 and self.info['blue_tokens'] == 0:
             a = 0
-        if a == 0 and self.info['rem_clues'] == 8:
+        if a == 0 and self.info['blue_tokens'] == 8:
             a = 1
 
         if a == 0:
@@ -465,6 +426,9 @@ def select_action():
             return ('p', 0) """
 
 def action_to_command(action):
+        for i, card in enumerate(my_knowledge.my_cards):
+            if card[0] != None or card[1] != None:
+                my_knowledge.my_cards[i] = (my_knowledge.my_cards[i][0], my_knowledge.my_cards[i][1], my_knowledge.my_cards[i][2] + 1) #update age of each hinted card
         if action[0] == 'discard':  
             # discard
             command = f"discard {action[1]}"
@@ -488,21 +452,23 @@ def manageInput():
     global before_action
     while run:
         if status != "Lobby":
-            if my_info.init is not True: 
+            if my_knowledge.init is not True: 
                 s.send(GameData.ClientGetGameStateRequest(playerName).serialize())
-            while my_info.my_turn == False:
+            while my_knowledge.my_turn == False:
                 time.sleep(sleeptime)
                 if update and run:
                     s.send(GameData.ClientGetGameStateRequest(playerName).serialize())
                 pass
             update = False
-            my_info.my_turn = False
+            my_knowledge.my_turn = False
             s.send(GameData.ClientGetGameStateRequest(playerName).serialize()) #like "show" command in client.py, it gives the actual knowledge for the actual player
             before_action = True
             action = select_action()
             command = action_to_command(action)
             if True: # if verbose_action:
                 print(command)
+            if debug:
+                tmp = input() #for debugging
         # Choose data to send
         if command == "exit":
             run = False
@@ -513,6 +479,7 @@ def manageInput():
             while status == 'Lobby':
                     ### Wait in the lobby until the game starts
                     continue
+
         #elif command == "show" and status == "Game":
          #   s.send(GameData.ClientGetGameStateRequest(playerName).serialize())
 
@@ -595,8 +562,8 @@ with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
 
         if type(data) is GameData.ServerGameStateData: ### done
             dataOk = True
-            if (data.currentPlayer == playerName and update) or not my_info.init:
-                parse_game_data(data)
+            if (data.currentPlayer == playerName and update) or not my_knowledge.init:
+                set_knowledge(data)
 
 
         if type(data) is GameData.ServerActionInvalid:
@@ -608,25 +575,25 @@ with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
             dataOk = True
             print(f"Discard action valid! Player {data.lastPlayer} discarded ({data.card.color}, {data.card.value})")
             print("Current player: " + data.player)
-            discard_feedback(data)
+            discard_update(data)
             update = True
 
         if type(data) is GameData.ServerPlayerMoveOk: #good play feedback
             dataOk = True
             print(f"Nice move! Player {data.lastPlayer} played ({data.card.color}, {data.card.value})")
             print("Current player: " + data.player)
-            niceMove_feedback(data)
+            niceMove_update(data)
             update = True
 
         if type(data) is GameData.ServerPlayerThunderStrike: #bad play feedback
             dataOk = True
             print(f"OH NO! The Gods are unhappy with you! Player {data.lastPlayer} tried to play ({data.card.color}, {data.card.value})")
-            badMove_feedback(data)
+            badMove_update(data)
             update = True
 
         if type(data) is GameData.ClientHintData: #hint given from this agent
             dataOk = True
-            parse_hint_data(data)
+            set_new_hint(data)
             print("Hint type: " + data.type)
             print(f"From player {data.source}")
             print("\tPlayer " + data.destination + " cards with value " + str(data.value) + " are:")
@@ -636,7 +603,7 @@ with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
 
         if type(data) is GameData.ServerHintData: #hint given to this agent
             dataOk = True
-            parse_hint_data(data)
+            set_new_hint(data)
             print("Hint type: " + data.type)
             print(f"From player {data.source}")
             print("\tPlayer " + data.destination + " cards with value " + str(data.value) + " are:")
@@ -656,7 +623,7 @@ with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
             stdout.flush()
             #run = False
             print("Ready for a new game!")
-            process_game_over(data.score)
+            game_over(data.score)
 
         if not dataOk:
             print("Unknown or unimplemented data type: " +  str(type(data)))

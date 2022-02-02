@@ -19,7 +19,9 @@ class Agent():
             try:
                 self.load_learned_model(save_filename)
             except:
-                print("No saved model found. Resetting all values.")
+                print("No saved model found.")
+
+        print("Q-Table reset")
 
     def pick_action(self, state):
         # state: actual state
@@ -48,4 +50,4 @@ class Agent():
 
     def save_learned_model(self, filename):
         np.save(filename,self.q_table)
-        #print 'Learned values saved'
+        print("Learned values saved")

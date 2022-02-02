@@ -10,6 +10,7 @@ from constants import *
 import os
 import time
 from knowledge import Knowledge
+import numpy as np
 
 
 if len(argv) < 5:
@@ -74,6 +75,25 @@ def discard_update(data):
             my_knowledge.my_cards_clued -= 1
         my_knowledge.my_cards.pop(data.cardHandIndex)
         my_knowledge.my_cards.append((None, None, 0))
+    
+    # Q-Learning
+    if my_knowledge.table_cards[data.card.color] >= data.card.value: #reward
+            reward = 8 # discarding this card was useful
+    elif data.card.value == 1 and my_knowledge.discard_pile[data.card.color][data.card.value]+1 == 3:
+        reward = -7 # this was last '1' card
+    elif data.card.value in [2,3,4] and my_knowledge.discard_pile[data.card.color][data.card.value]+1 == 2:
+        reward = -6 # this was last '2' card
+    elif data.card.value==5 and my_knowledge.discard_pile[data.card.color][data.card.value]+1 == 1:
+        reward = -5 # this was last '3' card
+    else:
+        reward = 9 - my_knowledge.blue_tokens # we have discarded but we could hint
+
+    next_state = my_knowledge.next_state()
+    if next_state not in my_knowledge.q_table:
+        my_knowledge.q_table[next_state] = np.zeros(len(my_knowledge.actions),dtype=float) # add new state
+    ## Update the Q-Table
+    my_knowledge.agent.update_q_table(my_knowledge.state,'discard',next_state,reward,False)
+    my_knowledge.state = next_state
 
 def niceMove_update(data):
     global my_knowledge
@@ -89,6 +109,15 @@ def niceMove_update(data):
         my_knowledge.my_cards.pop(data.cardHandIndex)
         my_knowledge.my_cards.append((None, None, 0))
 
+    # Q-Learning
+    reward = 10. #reward
+    next_state = my_knowledge.next_state()
+    if next_state not in my_knowledge.q_table:
+        my_knowledge.q_table[next_state] = np.zeros(len(my_knowledge.actions),dtype=float) # add new state
+    ## Update the Q-Table
+    my_knowledge.agent.update_q_table(my_knowledge.state,'play',next_state,reward,False)
+    my_knowledge.state = next_state
+
 def badMove_update(data):
     global my_knowledge
     my_knowledge.num_deck_cards -= 1
@@ -101,6 +130,14 @@ def badMove_update(data):
         my_knowledge.my_cards.pop(data.cardHandIndex)
         my_knowledge.my_cards.append((None, None, 0))
 
+    # Q-Learning
+    reward = -10. #reward
+    next_state = my_knowledge.next_state()
+    if next_state not in my_knowledge.q_table:
+        my_knowledge.q_table[next_state] = np.zeros(len(my_knowledge.actions),dtype=float) # add new state
+    ## Update the Q-Table
+    my_knowledge.agent.update_q_table(my_knowledge.state,'play',next_state,reward,False)
+    my_knowledge.state = next_state
 
 def set_new_hint(hint):
     global my_knowledge
@@ -119,18 +156,15 @@ def set_new_hint(hint):
     
     #my_knowledge.hint_history.add((data.source, data.destination, hint.type, hint.value))
 
-    """
-    # Q-Learning part
-    reward = self.info['blue_tokens']-self.num_players
-
-    next_state = (int(self.last_round), self.coarse_coding_blue_tokens(),\
-            3-self.info['red_tokens'], self.coarse_coding_score(), int(self.my_cards_clued > 0))
-    if next_state not in self.q_table:
-        self.q_table[next_state] = [0.,0.,0.]
-    self.q_table[self.state][1] = self.q_table[self.state][1] + self.alpha*(reward\
-        + self.gamma*self.q_table[next_state][np.argmax(self.q_table[next_state])] -\
-                self.q_table[self.state][1])
-    self.state = next_state """
+    
+    # Q-Learning
+    reward = my_knowledge.blue_tokens-my_knowledge.num_players #reward: it's better have more blue tokens if possible
+    next_state = my_knowledge.next_state()
+    if next_state not in my_knowledge.q_table:
+        my_knowledge.q_table[next_state] = np.zeros(len(my_knowledge.actions),dtype=float) # add new state
+    ## Update the Q-Table
+    my_knowledge.agent.update_q_table(my_knowledge.state,'hint',next_state,reward,False)
+    my_knowledge.state = next_state
 
 def game_over(score):
     global my_knowledge
@@ -144,6 +178,17 @@ def game_over(score):
     print(f"\nGame n.{num_games}: score {score}.")
     print(f"{max(my_knowledge.num_deck_cards, 0)} still in the deck.")
     print(f"Final table cards: {my_knowledge.table_cards}.")
+
+    # Q-Learning
+    # Computing reward
+    if score == 0:
+        reward = -20 # penalize lost games
+    else:
+        reward = score
+    # Updating Q-Table
+    next_state = (0, 0, 0, 0, 0) # reset state
+    my_knowledge.agent.update_q_table(my_knowledge.state,'play',next_state,reward,is_terminal=True) #terminal action - any action is valid
+    my_knowledge.state = next_state
     
     if results:
         if num_games == 0: 
@@ -247,7 +292,7 @@ def select_action():
             #     player_name =  my_knowledge.player_names[0]
             #     return ('hint', player_name, my_knowledge.players[player_name]['cards'][0].value) #random hint as last chance for very last
 
-        # Play/Discard rules with hints 
+        # Play rules with hints 
         for i, card in reversed(list(enumerate(my_knowledge.my_cards))): # look from the newest card (= the most right)
             value_hint = card[0]
             color_hint = card[1]
@@ -315,118 +360,85 @@ def select_action():
                 if  value_hint != None and color_hint != None: #if I have two hints on that card
                     if my_knowledge.table_cards[color_hint]+1 > value_hint:
                         return ('discard', i)
-        print("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA")
-        if my_knowledge.blue_tokens < 8:
-            return ('discard', 0)
-        else:
-            next_player_idx = (my_knowledge.my_turn_idx + 1) % my_knowledge.num_players #try to suggest to KEEP A CARD for later
-            for _ in range(my_knowledge.num_players-1): #for all the other players
-                player_name = my_knowledge.idx_player[next_player_idx]
-                player_cards = my_knowledge.players[player_name]['cards']
-                for i, card in enumerate(player_cards): #for all player's cards
-                    if my_knowledge.table_cards[card.color] < card.value: # player has a next card for that color
-                        hint_value = (my_knowledge.my_name, player_name, 'value', card.value, i)
-                        if is_hint_not_misunderstandable(hint_value,card.color):
-                            print("KEEP IT")
-                            return ('hint', player_name, hint_value[3])
-                next_player_idx = (next_player_idx + 1) % my_knowledge.num_players
-            next_player_idx = (my_knowledge.my_turn_idx + 1) % my_knowledge.num_players #all cards of all players are useless also for the future, suggest to DISCARD
-            for _ in range(my_knowledge.num_players-1): #for all the other players
-                player_name = my_knowledge.idx_player[next_player_idx]
-                player_cards = my_knowledge.players[player_name]['cards']
-                for i, card in enumerate(player_cards): #for all player's cards
-                    hint_value = (my_knowledge.my_name, player_name, 'value', card.value, i)
-                    hint_color = (my_knowledge.my_name, player_name, 'color', card.color, i)
-                    print("DISCARD IT")
-                    ## Give a hint that touches more cards
-                    if compare_hints(hint_value, hint_color) == 0: # hint on value touches more cards (to be discarded)
-                            return ('hint', player_name, hint_color[3])
-                    else: # hint on color touches more cards (to be discarded)
-                            return ('hint', player_name, hint_value[3])
-                next_player_idx = (next_player_idx + 1) % my_knowledge.num_players
-        
 
-        #THIS PART WOULD BE CHANGE WITH QL LEARNING
-        # else: #I cannot discard neither play hinted cards: i hint card less useful --> "i suggest you to discard it or keep it for later"
-        #     if my_knowledge.blue_tokens > 0:
-        #         print("\nLAST CASE!\n")
-        #         next_player_idx = (my_knowledge.my_turn_idx + 1) % my_knowledge.num_players #try to suggest to KEEP A CARD for later
-        #         for _ in range(my_knowledge.num_players-1): #for all the other players
-        #             player_name = my_knowledge.idx_player[next_player_idx]
-        #             player_cards = my_knowledge.players[player_name]['cards']
-        #             for i, card in enumerate(player_cards): #for all player's cards
-        #                 if last_remaining(card):
-        #                     hint_value = (my_knowledge.my_name, player_name, 'value', card.value, i)
-        #                     return ('hint', player_name, hint_value[3])
-        #                 if my_knowledge.table_cards[card.color] < card.value: # player has a next card for that color
-        #                     hint_value = (my_knowledge.my_name, player_name, 'value', card.value, i)
-        #                     return ('hint', player_name, hint_value[3])
-
-        #             next_player_idx = (next_player_idx + 1) % my_knowledge.num_players
-
-        #         next_player_idx = (my_knowledge.my_turn_idx + 1) % my_knowledge.num_players #all cards of all players are useless also for the future, suggest to DISCARD
-        #         for _ in range(my_knowledge.num_players-1): #for all the other players
-        #             player_name = my_knowledge.idx_player[next_player_idx]
-        #             player_cards = my_knowledge.players[player_name]['cards']
-        #             for i, card in enumerate(player_cards): #for all player's cards
-        #                 hint_value = (my_knowledge.my_name, player_name, 'value', card.value, i)
-        #                 hint_color = (my_knowledge.my_name, player_name, 'color', card.color, i)
-        #                 ## Give a hint that touches more cards
-        #                 if compare_hints(hint_value, hint_color) == 0: # hint on value touches more cards (to be discarded)
-        #                         return ('hint', player_name, hint_color[3])
-        #                 else: # hint on color touches more cards (to be discarded)
-        #                         return ('hint', player_name, hint_value[3])
-        #             next_player_idx = (next_player_idx + 1) % my_knowledge.num_players
-        # if my_knowledge.blue_tokens > 0:
-        #     print("\nLAST CASE!\n")
+        # print("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA")
+        # if my_knowledge.blue_tokens < 8:
+        #     return ('discard', 0)
+        # else:
         #     next_player_idx = (my_knowledge.my_turn_idx + 1) % my_knowledge.num_players #try to suggest to KEEP A CARD for later
         #     for _ in range(my_knowledge.num_players-1): #for all the other players
         #         player_name = my_knowledge.idx_player[next_player_idx]
         #         player_cards = my_knowledge.players[player_name]['cards']
         #         for i, card in enumerate(player_cards): #for all player's cards
-        #             if last_remaining(card):
+        #             if my_knowledge.table_cards[card.color] < card.value: # player has a next card for that color
         #                 hint_value = (my_knowledge.my_name, player_name, 'value', card.value, i)
-        #                 return ('hint', player_name, hint_value[3])
+        #                 if is_hint_not_misunderstandable(hint_value,card.color):
+        #                     print("KEEP IT")
+        #                     return ('hint', player_name, hint_value[3])
         #         next_player_idx = (next_player_idx + 1) % my_knowledge.num_players
-
-
-        """ ## Using the q-table (that is being updated constantly) to choose an action as a last resort 
-        a = np.argmax(self.q_table[self.state])
-        if a == 1 and self.info['blue_tokens'] == 0:
-            a = 0
-        if a == 0 and self.info['blue_tokens'] == 8:
-            a = 1
-
-        if a == 0:
-            ## discard
-            for idx, card in enumerate(self.my_cards):
-                if card[0] == None and card[1] == None:
-                    return ('d', idx)
-            for idx, card in enumerate(self.my_cards):
-                if card[0] == None or card[1] == None:
-                    return ('d', idx)
-            if self.last_round:
-                return ('d', 3)
-            else:
-                return ('d', 4)
-
-        if a == 1:
-            ## hint; Hint color to the last card of the furthest player to delay any possible misplay.
-            if self.turn == 0:
-                furthest_player_idx = self.num_players-1
-            else:
-                furthest_player_idx = self.turn-1
-            p_name = self.idx_player[furthest_player_idx]
-            if self.last_round:
-                card = self.info['players'][self.idx_player[furthest_player_idx]]['cards'][3]
-            else:
-                card = self.info['players'][self.idx_player[furthest_player_idx]]['cards'][4]
-            hint_color = (self.name, p_name, 'value', card.color)
-            return ('h', p_name, hint_color[3])
+        #     next_player_idx = (my_knowledge.my_turn_idx + 1) % my_knowledge.num_players #all cards of all players are useless also for the future, suggest to DISCARD
+        #     for _ in range(my_knowledge.num_players-1): #for all the other players
+        #         player_name = my_knowledge.idx_player[next_player_idx]
+        #         player_cards = my_knowledge.players[player_name]['cards']
+        #         for i, card in enumerate(player_cards): #for all player's cards
+        #             hint_value = (my_knowledge.my_name, player_name, 'value', card.value, i)
+        #             hint_color = (my_knowledge.my_name, player_name, 'color', card.color, i)
+        #             print("DISCARD IT")
+        #             ## Give a hint that touches more cards
+        #             if compare_hints(hint_value, hint_color) == 0: # hint on value touches more cards (to be discarded)
+        #                     return ('hint', player_name, hint_color[3])
+        #             else: # hint on color touches more cards (to be discarded)
+        #                     return ('hint', player_name, hint_value[3])
+        #         next_player_idx = (next_player_idx + 1) % my_knowledge.num_players
         
-        if a == 2:
+
+        # Q-Learning
+        print("Q-Learning action")
+        action = my_knowledge.agent.pick_action(my_knowledge.state)
+        if action == "hint" and my_knowledge.blue_tokens == 0: # you cannot pick this action
+            a = "discard"
+        if a == "discard" and my_knowledge.blue_tokens == 8: # you cannot pick this action
+            a = "hint"
+
+        if a == "discard":
+            # discard action
+            for idx, card in enumerate(my_knowledge.my_cards):
+                if card[0] == None and card[1] == None: #totally unclued
+                    return ("discard", idx)
+            for idx, card in enumerate(my_knowledge.my_cards):
+                if card[0] == None or card[1] == None:
+                    return ("discard", idx) #partially unclued
+            return ("discard", 0) #discard the oldest
+
+        if a == "hint":
+            # hint action
+            if my_knowledge.my_turn_idx == 0:
+                furthest_player_idx = my_knowledge.num_players-1
+            else:
+                furthest_player_idx = my_knowledge.turn-1
+            player_name = my_knowledge.idx_player[furthest_player_idx]
+            player_cards = my_knowledge.players[player_name]['cards']
+            #try to suggest to KEEP A CARD for later
+            for i, card in enumerate(player_cards): #for all player's cards
+                if my_knowledge.table_cards[card.color] < card.value: # player has a next card for that color
+                    hint_value = (my_knowledge.my_name, player_name, 'value', card.value, i)
+                    if is_hint_not_misunderstandable(hint_value,card.color):
+                        print("KEEP IT")
+                        return ('hint', player_name, hint_value[3])
+            #all cards of all players are useless also for the future, suggest to DISCARD
+            for i, card in enumerate(player_cards): #for all player's cards
+                hint_value = (my_knowledge.my_name, player_name, 'value', card.value, i)
+                hint_color = (my_knowledge.my_name, player_name, 'color', card.color, i)
+                print("DISCARD IT")
+                ## Give a hint that touches more cards
+                if compare_hints(hint_value, hint_color) == 0: # hint on color touches more cards (to be discarded)
+                        return ('hint', player_name, hint_color[3])
+                else: # hint on value touches more cards (to be discarded)
+                        return ('hint', player_name, hint_value[3])
+
+        if a == "play":
             ## Play your newest card
-            return ('p', 0) """
+            return ("play", my_knowledge.handSize - 1)
 
 def action_to_command(action):
         for i, card in enumerate(my_knowledge.my_cards):

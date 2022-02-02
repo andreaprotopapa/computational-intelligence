@@ -1,3 +1,4 @@
+from agent import Agent
 class Knowledge(object):
     """Knowledge object for all the actual information of the agent\n
         'my_name': client agent's name
@@ -21,7 +22,7 @@ class Knowledge(object):
         'currentPlayer': current player's name\n
         'last_round': bool
     """
-    def __init__(self, playerName, data=None) -> None:
+    def __init__(self, playerName, data=None, loaded_learn_qTable=False) -> None:
         super().__init__()
         if data is not None:
             self.init = True
@@ -34,7 +35,7 @@ class Knowledge(object):
             self.handSize = len(self.my_cards)
             self.my_turn = False
             self.my_turn_idx = None
-            self.my_available_actions = []
+
             self.my_last_remaining_hints = []
 
             self.player_names = [player.name for player in data.players if player.name != playerName] # all the other players' names
@@ -67,6 +68,17 @@ class Knowledge(object):
         
             self.current_player = data.currentPlayer
             self.last_round = False
+            self.actual_score = 0
+
+            # Q-Learning 
+            self.policy = {} # {action: value}
+            self.action = None
+            # state: (last_round, state_blueTokens, state_redTokens, state_actualScore, my_cards_clued)
+            self.state = (0, 0, 0, 0, 0)
+            self.actions = ['play','hint','discard']
+            self.my_available_actions = [] #### ????????????????
+            self.agent = Agent(self.state,self.actions,load_learned=loaded_learn_qTable,save_filename=f"learned_qTable_{self.num_players}.py")
+
         else:
             self.init = False
             self.my_turn = False
@@ -133,3 +145,41 @@ class Knowledge(object):
                 + f"Cards remaining: {max(self.num_deck_cards, 0)}\n"
                 + "Note tokens used: " + str(8-self.blue_tokens) + "/8" + "\n"
                 + "Storm tokens used: " + str(3-self.red_tokens) + "/3" + "\n")
+
+    def state_for_blueTokens(self): # we decrese the state size for blue tokens from 8 to 5
+        if self.blue_tokens == 0:
+            return 0
+        if self.blue_tokens in [1,2]:
+            return 1
+        if self.blue_tokens in [3,4,5]:
+            return 2
+        if self.blue_tokens in [6,7]:
+            return 3
+        return 4 #blue_tokens = 8
+    
+    def state_for_redTokens(self): # we decrese the state size for blue tokens from 8 to 5
+        if self.red_tokens == 0:
+            return 3
+        if self.red_tokens == 1:
+            return 2
+        if self.red_tokens == 2:
+            return 1
+        if self.red_tokens == 3:
+            return 0
+
+    def state_for_score(self): # we decrese the state size for scores from 25 to 4
+        self.actual_score = sum(self.table_cards.values())
+        if self.actual_score < 5:
+            return 0
+        if self.actual_score >=5 and self.actual_score < 10:
+            return 1
+        if self.actual_score >=10 and self.actual_score < 20:
+            return 2
+        return 3 # actual_score >= 20
+
+    def next_state(self):
+        return (int(self.last_round),
+                self.state_for_blueTokens(),
+                self.state_for_redTokens(),
+                self.state_for_score(),
+                int(self.my_cards_clued > 0))

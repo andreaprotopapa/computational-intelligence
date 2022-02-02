@@ -2,11 +2,18 @@ import numpy as np
 
 class Agent():
     def __init__(self, initial_state, actions, epsilon=0.2, gamma=0.8, alpha=0.1, load_learned = False, save_filename="learned_qTable.py"):
-        # state_size: size of all possible states - int
-        # actions: set of possible actions - list
-        # Epsilon: the percent you want to explore - float
-        # Gamma: discount factor
-        # Alpha: LR
+        """ Q-Learning Agent, used to choose the best action based on the best reward. 
+
+        Args:
+            initial_state (tuple): initial state of the enviroment
+            actions (list): possible actions on the actual state.
+            epsilon (float, optional): the percentage of how much you want to explore. Defaults to 0.2.
+            gamma (float, optional): discount factor. Defaults to 0.8.
+            alpha (float, optional): LR. Defaults to 0.1.
+            load_learned (bool, optional): use the Q-Table already learned in past trainings. Defaults to False.
+            save_filename (str, optional): file where save/load the Q-Table. Defaults to "learned_qTable.py".
+        """
+
         self.q_table = {initial_state: np.zeros(len(actions),dtype=float)} # Initialize q-table as a dictionary (sparse table)
         
         self.epsilon = epsilon

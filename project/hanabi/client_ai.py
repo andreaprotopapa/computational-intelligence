@@ -158,7 +158,7 @@ def set_new_hint(hint):
 
     
     # Q-Learning
-    reward = my_knowledge.blue_tokens-my_knowledge.num_players #reward: it's better have more blue tokens if possible
+    reward = my_knowledge.blue_tokens - my_knowledge.num_players #reward: it's better have more blue tokens if possible
     next_state = my_knowledge.next_state()
     if next_state not in my_knowledge.q_table:
         my_knowledge.q_table[next_state] = np.zeros(len(my_knowledge.actions),dtype=float) # add new state
@@ -271,26 +271,11 @@ def last_remaining(card):
 
 def select_action():
         # HARD-CODED AGENT
-        # Hint dangerous cases
-        # next_player_idx = (my_knowledge.my_turn_idx + 1) % my_knowledge.num_players
-        # for _ in range(my_knowledge.num_players-1): #for all the other players
-        #     player_name = my_knowledge.idx_player[next_player_idx]
-        #     player_cards = my_knowledge.players[player_name]['cards']
-        #     for i, card in enumerate(player_cards): #for all player's cards
-        #         if last_remaining(card):
-        #             hint_value = (my_knowledge.my_name, player_name, 'value', card.value, i)
-        #             return ('hint', player_name, hint_value[3])
-        #     next_player_idx = (next_player_idx + 1) % my_knowledge.num_players
 
         ## Last round (play the newest card if we have more than one storm tokens available)
         if my_knowledge.last_round:
             if my_knowledge.red_tokens > 1 and my_knowledge.num_deck_cards > 0:
                 return ('play', my_knowledge.handSize -1 )
-            # elif my_knowledge.blue_tokens < 8 and my_knowledge.num_deck_cards > 0:
-            #     return ('discard', 0)
-            # else:
-            #     player_name =  my_knowledge.player_names[0]
-            #     return ('hint', player_name, my_knowledge.players[player_name]['cards'][0].value) #random hint as last chance for very last
 
         # Play rules with hints 
         for i, card in reversed(list(enumerate(my_knowledge.my_cards))): # look from the newest card (= the most right)
@@ -334,6 +319,7 @@ def select_action():
                         else: # hint on color touches less cards
                             if is_hint_safe(hint_color): # To avoid misplays, we only give hints that do not touch dangerous cards before the hinted one
                                 return ('hint', player_name, hint_color[3])
+                # Hint dangerous cases
                 for i, card in enumerate(player_cards): #for all player's cards
                     if last_remaining(card):
                         if card not in my_knowledge.my_last_remaining_hints:
@@ -411,7 +397,7 @@ def select_action():
             return ("discard", 0) #discard the oldest
 
         if a == "hint":
-            # hint action
+            # hint action to further plpayer respect to me
             if my_knowledge.my_turn_idx == 0:
                 furthest_player_idx = my_knowledge.num_players-1
             else:

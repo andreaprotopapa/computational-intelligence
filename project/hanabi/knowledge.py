@@ -1,26 +1,31 @@
 from agent import Agent
 class Knowledge(object):
-    """Knowledge object for all the actual information of the agent\n
-        'my_name': client agent's name
-        'my_cards': [list of hintState tuples on agent's cards]
-        'my_cards_clued': # of cards clued in agent's hand
-        'my_turn': bool
-        'my_turn_idx': int
-        'my_available_actions': [list of possible actions for the agent]
+    """ Knowledge object for all the actual information of the agent\n
+        Attributes:
+            'my_name': client agent's name
+            'my_cards': [list of hintState tuples on agent's cards]
+            'my_cards_clued': # of cards clued in agent's hand
+            'my_turn': bool
+            'my_turn_idx': int
 
-        'player_names': [list of all the other players' names]\n
-        'players': {'player_name': {'turn': turn, 'cards': [list of Card objs]}}\n
-        'num_players': # total number of players\n
-        'num_deck_cards': # actual number of desk cards\n
-        'table_cards':  {'red':  n_red, 'blue': n_blue, 'yellow': n_yellow, 'green': n_green, 'white': n_white}\n
-        'discard_pile': {'red':[n_red], 'blue':[n_blue], 'yellow':[n_yellow], 'green':[n_green], 'white':[n_white]}\n
-        'blue_tokens':    # remaining number blue tokens\n 
-        'red_tokens': # remaining number red tokens\n
+            'player_names': [list of all the other players' names]\n
+            'players': {'player_name': {'turn': turn, 'cards': [list of Card objs]}}\n
+            'num_players': # total number of players\n
+            'num_deck_cards': # actual number of desk cards\n
+            'table_cards':  {'red':  n_red, 'blue': n_blue, 'yellow': n_yellow, 'green': n_green, 'white': n_white}\n
+            'discard_pile': {'red':[n_red], 'blue':[n_blue], 'yellow':[n_yellow], 'green':[n_green], 'white':[n_white]}\n
+            'blue_tokens':    # remaining number blue tokens\n 
+            'red_tokens': # remaining number red tokens\n
 
-        'player_idx': {'player_name': #turn index}\n
-        'idx_player': {'idx_player':  #player name}\n
-        'currentPlayer': current player's name\n
-        'last_round': bool
+            'player_idx': {'player_name': #turn index}\n
+            'idx_player': {'idx_player':  #player name}\n
+            'currentPlayer': current player's name\n
+            'last_round': bool
+            'actual_score': float
+
+            'state': actual state of the enviroment
+            'actions': list of possible actions
+            'agent': Q-Learning agent
     """
     def __init__(self, playerName, data=None, loaded_learn_qTable=False) -> None:
         super().__init__()
@@ -71,12 +76,9 @@ class Knowledge(object):
             self.actual_score = 0
 
             # Q-Learning 
-            self.policy = {} # {action: value}
-            self.action = None
             # state: (last_round, state_blueTokens, state_redTokens, state_actualScore, my_cards_clued)
             self.state = (0, 0, 0, 0, 0)
             self.actions = ['play','hint','discard']
-            self.my_available_actions = [] #### ????????????????
             self.agent = Agent(self.state,self.actions,load_learned=loaded_learn_qTable,save_filename=f"learned_qTable_{self.num_players}.py")
 
         else:
@@ -104,11 +106,7 @@ class Knowledge(object):
         self.blue_tokens = 8 - data.usedNoteTokens #set remaining clues
         self.red_tokens = 3 - data.usedStormTokens #set remaining mistakes
 
-        ### actions:    ('discard', 3)              --> discard cart 3 
-        #               ('play', 5)                 --> play cart 5
-        #               ('hint', 'agent_1', 'blue') --> hint player agent_1 'blue'
-        #               ('hint', 'agent_2', 1)      --> hint player agent_2 number '1'
-        self.my_available_actions = [('play',0), ('play', 1), ('play', 2), ('play', 3), ('play', 4)]  # playing is always permissible (last round?)
+        
 
         ### Calculating available hints
         if self.blue_tokens > 0:
@@ -118,12 +116,6 @@ class Knowledge(object):
                     for card in self.players[player]['cards']:
                         hints_set.add(('hint', player, card.color))
                         hints_set.add(('hint', player, card.value))
-            for action in hints_set:
-                self.my_available_actions.append(action)
-        if self.blue_tokens != 8: # discard is good (so, valid) only if I can get back a blue token
-            # discard actions
-            if self.last_round:
-                self.my_available_actions.extend([('discard',0), ('discard', 1), ('discard', 2), ('discard', 3), ('discard', 4)])
         self.current_player = data.currentPlayer
 
 

@@ -27,7 +27,7 @@ class Knowledge(object):
             'actions': list of possible actions
             'agent': Q-Learning agent
     """
-    def __init__(self, playerName, data=None, loaded_learn_qTable=False) -> None:
+    def __init__(self, playerName, data=None, loaded_learn_qTable=False,training=False) -> None:
         super().__init__()
         if data is not None:
             self.init = True
@@ -74,13 +74,17 @@ class Knowledge(object):
             self.current_player = data.currentPlayer
             self.last_round = False
             self.actual_score = 0
-
             # Q-Learning 
             # state: (last_round, state_blueTokens, state_redTokens, state_actualScore, my_cards_clued)
             self.state = (0, 0, 0, 0, 0)
             self.actions = ['play','hint','discard']
-            self.agent = Agent(self.state,self.actions,load_learned=loaded_learn_qTable,save_filename=f"learned_qTable_{self.num_players}.py")
-
+            if training:
+                epsilon = 0.2
+                print("Training mode")
+            else:
+                epsilon = 0.0 #if it's not training we focus on exploitation and not exploration
+                print("Evaluation mode")
+            self.agent = Agent(self.state,self.actions, epsilon=epsilon, load_learned=loaded_learn_qTable,save_filename=f"learned_qTable_{self.num_players}.npy")
         else:
             self.init = False
             self.my_turn = False

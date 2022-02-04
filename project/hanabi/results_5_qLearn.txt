@@ -1,0 +1,12 @@
+Game n.0: 19 
+Game n.1: 16 
+Game n.2: 18 
+Game n.3: 20 
+Game n.4: 20 
+Game n.5: 15 
+Game n.6: 15 
+Game n.7: 0 
+Game n.8: 17 
+Game n.9: 18 
+----------------------------
+Avarage score: 15.8

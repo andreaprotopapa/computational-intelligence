@@ -33,13 +33,13 @@ else:
 
 run = True
 
-debug = False
+debug = False # allow to see step by step the game by the agents, stopping at the end of each turn. Press any key to continue
 
-verbose = False
+verbose = False # add some more information printed on the console
 
-loaded = True
+loaded = True # allow to use as starting point a Q-Table already filled
 
-q_learn = True
+q_learn = True # activate the Q-Learning procedure
 
 statuses = ["Lobby", "Game", "GameHint"]
 
@@ -56,8 +56,8 @@ update = True
 sleeptime = 0.1
 before_action = True
 
-last_hard = 0
-last_q = 0
+last_hard = 0 #counts how many times we end to use the "Rule-based last resource"
+last_q = 0 #counts how many times we end to use the "Q-Learning last resource"
 
 my_knowledge = Knowledge(playerName) # all agent knowledge is here
 
@@ -115,9 +115,6 @@ def discard_update(data):
 def niceMove_update(data):
     global my_knowledge
     my_knowledge.num_deck_cards -= 1
-    #TODO (Apparantly not supported by the server!)
-    # if data.card.value == 5 and my_knowledge.blue_tokens < 8:
-    #     my_knowledge.blue_tokens += 1
     if (my_knowledge.num_players < 4 and data.handLength < 5) or (my_knowledge.num_players >= 4 and data.handLength < 4):
         my_knowledge.last_round = True
     if data.lastPlayer == my_knowledge.my_name:
@@ -170,9 +167,6 @@ def set_new_hint(hint):
                 if my_knowledge.my_cards[i][0] == None and my_knowledge.my_cards[i][1] == None:
                     my_knowledge.my_cards_clued += 1
                 my_knowledge.my_cards[i] = (my_knowledge.my_cards[i][0], hint.value,1)
-    
-    #my_knowledge.hint_history.add((data.source, data.destination, hint.type, hint.value))
-
     
     # Q-Learning
     reward = my_knowledge.blue_tokens - my_knowledge.num_players #reward: it's better have more blue tokens if possible
@@ -232,7 +226,8 @@ def game_over(score):
                     file_out.write(f"----------------------------\n")
                     file_out.write(f"Avarage score: {average_score}\n")
             my_knowledge.agent.save_learned_model(f"learned_qTable_{my_knowledge.num_players}.npy")
-            print(f"Last hard used:{last_hard}\nLast Q-Learn used:{last_q}")
+            if verbose:
+                print(f"Last hard used:{last_hard}\nLast Q-Learn used:{last_q}")
             os._exit(0)
         else:
             print("Beginning a new game...")
@@ -254,7 +249,8 @@ def is_hint_safe(hint):
                 return False
     return True
 
-def is_hint_not_misunderstandable(hint,real_color): #if there is already a card on the table that is the card before the hinted one is misunderstandable!!!
+def is_hint_not_misunderstandable(hint,real_color):
+    #if there is already a card on the table that is the card before the hinted one, it's misunderstandable! 
     if hint[2] == 'value' and hint[3]!=1:
         for color in card_colors:
             if color != real_color:
@@ -455,8 +451,6 @@ def select_action():
                         else: # hint on color touches more cards (to be discarded)
                                 return ('hint', player_name, hint_value[3])
                     next_player_idx = (next_player_idx + 1) % my_knowledge.num_players
-        
-
 
 def action_to_command(action):
         for i, card in enumerate(my_knowledge.my_cards):
@@ -494,7 +488,7 @@ def manageInput():
                 pass
             update = False
             my_knowledge.my_turn = False
-            s.send(GameData.ClientGetGameStateRequest(playerName).serialize()) #like "show" command in client.py, it gives the actual knowledge for the actual player
+            s.send(GameData.ClientGetGameStateRequest(playerName).serialize()) #like "show" command in client.py, it prints the actual knowledge for the actual player
             before_action = True
             action = select_action()
             command = action_to_command(action)
@@ -510,11 +504,7 @@ def manageInput():
         elif command == "ready" and status == "Lobby":
             s.send(GameData.ClientPlayerStartRequest(playerName).serialize())
             while status == 'Lobby':
-                    ### Wait in the lobby until the game starts
                     continue
-
-        #elif command == "show" and status == "Game":
-         #   s.send(GameData.ClientGetGameStateRequest(playerName).serialize())
 
         elif command.split(" ")[0] == "discard" and status == "Game":
             try:

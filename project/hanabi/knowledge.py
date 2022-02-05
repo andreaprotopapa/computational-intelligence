@@ -57,8 +57,8 @@ class Knowledge(object):
             self.blue_tokens = 8
             self.red_tokens = 3
 
-            self.player_idx = {} # ???
-            self.idx_player = {} # ???
+            self.player_idx = {}
+            self.idx_player = {}
 
             for p in self.player_names: #set players
                 self.players[p] = {'turn': -1, 'cards': []}
@@ -68,8 +68,8 @@ class Knowledge(object):
                 else:
                     self.players[data.players[i].name]['turn'] = i
                     self.players[data.players[i].name]['cards'] = data.players[i].hand
-                    self.player_idx[data.players[i].name] = i # ???
-                    self.idx_player[i] = data.players[i].name # ???
+                    self.player_idx[data.players[i].name] = i 
+                    self.idx_player[i] = data.players[i].name 
         
             self.current_player = data.currentPlayer
             self.last_round = False
@@ -110,8 +110,6 @@ class Knowledge(object):
         self.blue_tokens = 8 - data.usedNoteTokens #set remaining clues
         self.red_tokens = 3 - data.usedStormTokens #set remaining mistakes
 
-        
-
         ### Calculating available hints
         if self.blue_tokens > 0:
             # hint actions
@@ -121,7 +119,6 @@ class Knowledge(object):
                         hints_set.add(('hint', player, card.color))
                         hints_set.add(('hint', player, card.value))
         self.current_player = data.currentPlayer
-
 
     def toString(self):
         players_hands = ""

@@ -53,8 +53,11 @@ num_games = 0
 average_score = 0.0
 
 update = True
-sleeptime = 0.05
+sleeptime = 0.1
 before_action = True
+
+last_hard = 0
+last_q = 0
 
 my_knowledge = Knowledge(playerName) # all agent knowledge is here
 
@@ -82,7 +85,7 @@ def discard_update(data):
     global my_knowledge 
     my_knowledge.num_deck_cards -= 1
     my_knowledge.blue_tokens += 1
-    if data.handLength < 5:
+    if (my_knowledge.num_players < 4 and data.handLength < 5) or (my_knowledge.num_players >= 4 and data.handLength < 4):
         my_knowledge.last_round = True
     if data.lastPlayer == my_knowledge.my_name:
         if my_knowledge.my_cards[data.cardHandIndex][0] != None or my_knowledge.my_cards[data.cardHandIndex][1] != None: #if I had clues on that card
@@ -115,7 +118,7 @@ def niceMove_update(data):
     #TODO (Apparantly not supported by the server!)
     # if data.card.value == 5 and my_knowledge.blue_tokens < 8:
     #     my_knowledge.blue_tokens += 1
-    if data.handLength < 5:
+    if (my_knowledge.num_players < 4 and data.handLength < 5) or (my_knowledge.num_players >= 4 and data.handLength < 4):
         my_knowledge.last_round = True
     if data.lastPlayer == my_knowledge.my_name:
         if my_knowledge.my_cards[data.cardHandIndex][0] != None or my_knowledge.my_cards[data.cardHandIndex][1] != None: #if I had clues on that card
@@ -136,7 +139,7 @@ def badMove_update(data):
     global my_knowledge
     my_knowledge.num_deck_cards -= 1
     my_knowledge.red_tokens -= 1
-    if data.handLength < 5:
+    if (my_knowledge.num_players < 4 and data.handLength < 5) or (my_knowledge.num_players >= 4 and data.handLength < 4):
         my_knowledge.last_round = True
     if data.lastPlayer == my_knowledge.my_name: #my fault
         if my_knowledge.my_cards[data.cardHandIndex][0] != None or my_knowledge.my_cards[data.cardHandIndex][1] != None: #if I had clues on that card
@@ -229,6 +232,7 @@ def game_over(score):
                     file_out.write(f"----------------------------\n")
                     file_out.write(f"Avarage score: {average_score}\n")
             my_knowledge.agent.save_learned_model(f"learned_qTable_{my_knowledge.num_players}.npy")
+            print(f"Last hard used:{last_hard}\nLast Q-Learn used:{last_q}")
             os._exit(0)
         else:
             print("Beginning a new game...")
@@ -291,6 +295,8 @@ def last_remaining(card):
             return False
 
 def select_action():
+        global last_hard
+        global last_q
         # HARD-CODED AGENT
 
         ## Last round (play the newest card if we have more than one storm tokens available)
@@ -371,6 +377,7 @@ def select_action():
         if q_learn:
             # Q-Learning
             print("Q-Learning action")
+            last_q = last_q + 1
             action = my_knowledge.agent.pick_action(my_knowledge.state)
             if action == "hint" and my_knowledge.blue_tokens == 0: # you cannot pick this action
                 action = "discard"
@@ -419,6 +426,7 @@ def select_action():
 
         else:  #Q-Learning disabled
             print("Rule-based last resource")
+            last_hard = last_hard + 1
             if my_knowledge.blue_tokens < 8:
                 return ('discard', 0)
             else:
